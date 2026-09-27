@@ -1,0 +1,27 @@
+@startuml
+title Login flow
+actor User
+participant "Web App" as App
+database DB
+
+User -> App : submit credentials
+activate App
+App -> DB : find user
+DB --> App : user record
+alt valid password
+  App --> User : 200 OK + session
+else invalid
+  App --> User : 401 Authorized
+end
+deactivate App
+@enduml
+
+@startuml
+!include shared/styles.iuml
+class Order {
+  +id : UUID
+  +total() : Money
+}
+class LineItem
+Order "1" *-- "many" LineItem
+@enduml

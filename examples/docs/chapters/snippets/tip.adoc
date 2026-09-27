@@ -1,0 +1,1 @@
+TIP: This tip is two include levels deep: `manual.adoc` → `01-introduction.adoc` → `snippets/tip.adoc`.

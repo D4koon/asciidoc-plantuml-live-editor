@@ -1,0 +1,6 @@
+' The included file doesn't exist. The directive is passed to the engine
+' unchanged, so the preview shows PlantUML's own error for it.
+@startuml
+!include does-not-exist.iuml
+A -> B
+@enduml

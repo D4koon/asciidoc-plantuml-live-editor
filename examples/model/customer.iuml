@@ -1,0 +1,6 @@
+' Included from a subfolder, so the path to the shared styles goes up a level.
+!include_once ../shared/styles.iuml
+class Customer {
+  +name : String
+  +email : String
+}

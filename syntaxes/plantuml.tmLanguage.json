@@ -1,0 +1,85 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "PlantUML",
+  "scopeName": "source.plantuml",
+  "patterns": [
+    { "include": "#blockComment" },
+    { "include": "#lineComment" },
+    { "include": "#startEnd" },
+    { "include": "#preprocessor" },
+    { "include": "#skinparam" },
+    { "include": "#keywords" },
+    { "include": "#arrows" },
+    { "include": "#strings" },
+    { "include": "#colors" },
+    { "include": "#stereotypes" }
+  ],
+  "repository": {
+    "blockComment": {
+      "name": "comment.block.plantuml",
+      "begin": "/'",
+      "end": "'/"
+    },
+    "lineComment": {
+      "name": "comment.line.single-quote.plantuml",
+      "match": "^\\s*'.*$"
+    },
+    "startEnd": {
+      "name": "keyword.control.plantuml",
+      "match": "^\\s*@(start|end)\\w+"
+    },
+    "preprocessor": {
+      "patterns": [
+        {
+          "match": "^\\s*(!(?:include(?:_many|_once|url|sub)?|import|define(?:long)?|enddefinelong|undef|if|ifdef|ifndef|elseif|else|endif|while|endwhile|foreach|endfor|procedure|endprocedure|function|endfunction|unquoted|return|log|dump_memory|assert|theme|pragma))\\b(.*)$",
+          "captures": {
+            "1": { "name": "keyword.other.preprocessor.plantuml" },
+            "2": { "name": "string.unquoted.plantuml" }
+          }
+        },
+        {
+          "name": "variable.other.plantuml",
+          "match": "\\$\\w+"
+        }
+      ]
+    },
+    "skinparam": {
+      "match": "^\\s*(skinparam|hide|show|scale|title|header|footer|caption|legend|endlegend|left to right direction|top to bottom direction|autonumber|newpage|allowmixing|mainframe)\\b",
+      "captures": {
+        "1": { "name": "keyword.other.plantuml" }
+      }
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "storage.type.plantuml",
+          "match": "\\b(actor|boundary|control|entity|database|collections|queue|participant|usecase|class|abstract|interface|enum|annotation|protocol|struct|exception|metaclass|stereotype|object|map|json|yaml|component|node|artifact|cloud|folder|frame|file|package|namespace|rectangle|card|storage|agent|stack|hexagon|person|state|diamond|circle|label|archimate|port|portin|portout)\\b"
+        },
+        {
+          "name": "keyword.control.plantuml",
+          "match": "\\b(alt|else|opt|loop|par|par2|break|critical|group|end|ref|over|box|activate|deactivate|destroy|create|return|note|end note|endnote|rnote|hnote|of|on|as|left|right|top|bottom|start|stop|kill|detach|if|then|elseif|endif|while|endwhile|repeat|fork|again|end fork|fork again|split|end split|switch|case|endswitch|partition|swimlane|backward|is|extends|implements)\\b"
+        }
+      ]
+    },
+    "arrows": {
+      "name": "keyword.operator.arrow.plantuml",
+      "match": "(<\\|?|\\*|o|\\+|#|x|\\}|\\{|<<|\\\\\\\\|//)?(-+|\\.+|=+|~+)(\\[[^\\]]*\\])?(up|down|left|right|u|d|l|r)?(-+|\\.+|=+|~+)?(\\|?>|\\*|o|\\+|#|x|\\{|\\}|>>|\\\\\\\\|//)"
+    },
+    "strings": {
+      "name": "string.quoted.double.plantuml",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        { "name": "constant.character.escape.plantuml", "match": "\\\\." }
+      ]
+    },
+    "colors": {
+      "name": "constant.other.color.plantuml",
+      "match": "#(?:[0-9a-fA-F]{3,8}\\b|[A-Za-z]+\\b)"
+    },
+    "stereotypes": {
+      "name": "entity.name.tag.stereotype.plantuml",
+      "match": "<<[^>]+>>"
+    }
+  }
+}

@@ -1,0 +1,12 @@
+.vscode/**
+src/**
+scripts/**
+examples/**
+node_modules/**
+!node_modules/@asciidoctor/core/package.json
+!node_modules/@asciidoctor/core/LICENSE
+!node_modules/@asciidoctor/core/build/node/**
+**/*.map
+**/*.ts
+tsconfig.json
+.gitignore

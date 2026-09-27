@@ -1,0 +1,11 @@
+== Architecture
+
+include::sections/components.adoc[]
+
+=== Domain model
+
+This diagram comes from a `.puml` file. Like Asciidoctor Diagram, the path in
+`plantuml::` is relative to the main document (`manual.adoc`), not to this chapter.
+
+.Domain model (from model/domain.puml)
+plantuml::../model/domain.puml[]

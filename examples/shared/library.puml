@@ -1,0 +1,16 @@
+' Reusable diagram fragments. Other files pick one by id:
+'   !include shared/library.puml!auth
+' Opening this file on its own shows both fragments.
+
+@startuml(id=auth)
+User -> App : login
+App -> DB : check credentials
+DB --> App : ok
+App --> User : session
+@enduml
+
+@startuml(id=billing)
+User -> App : checkout
+App -> DB : store order
+App --> User : receipt
+@enduml

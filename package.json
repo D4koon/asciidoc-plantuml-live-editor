@@ -1,0 +1,300 @@
+{
+  "name": "asciidoc-plantuml-live-editor",
+  "displayName": "AsciiDoc & PlantUML Live Editor",
+  "description": "Live preview and visual editing of AsciiDoc documents and PlantUML diagrams, rendered entirely inside VS Code (no Java, no Graphviz, no server).",
+  "version": "0.1.0",
+  "publisher": "baam",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/D4koon/asciidoc-plantuml-live-editor.git"
+  },
+  "homepage": "https://github.com/D4koon/asciidoc-plantuml-live-editor#readme",
+  "bugs": {
+    "url": "https://github.com/D4koon/asciidoc-plantuml-live-editor/issues"
+  },
+  "engines": {
+    "vscode": "^1.126.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Visualization"
+  ],
+  "keywords": [
+    "plantuml",
+    "uml",
+    "diagram",
+    "preview",
+    "asciidoc",
+    "asciidoctor",
+    "adoc",
+    "editor",
+    "diff"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onWebviewPanel:asciidocPlantumlLive.preview",
+    "onLanguage:asciidoc"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "plantuml",
+        "aliases": [
+          "PlantUML",
+          "plantuml"
+        ],
+        "extensions": [
+          ".puml",
+          ".plantuml",
+          ".pu",
+          ".iuml",
+          ".wsd"
+        ],
+        "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "asciidoc",
+        "aliases": [
+          "AsciiDoc",
+          "asciidoc"
+        ],
+        "extensions": [
+          ".adoc",
+          ".asciidoc",
+          ".asc"
+        ],
+        "configuration": "./language-configuration-asciidoc.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "plantuml",
+        "scopeName": "source.plantuml",
+        "path": "./syntaxes/plantuml.tmLanguage.json"
+      },
+      {
+        "language": "asciidoc",
+        "scopeName": "text.asciidoc.plantumlview",
+        "path": "./syntaxes/asciidoc.tmLanguage.json",
+        "embeddedLanguages": {
+          "meta.embedded.block.plantuml": "plantuml"
+        }
+      }
+    ],
+    "commands": [
+      {
+        "command": "asciidocPlantumlLive.openPreview",
+        "title": "Show Preview",
+        "category": "AsciiDoc & PlantUML",
+        "icon": "$(preview)"
+      },
+      {
+        "command": "asciidocPlantumlLive.openPreviewToSide",
+        "title": "Open Preview to the Side",
+        "category": "AsciiDoc & PlantUML",
+        "icon": "$(open-preview)"
+      },
+      {
+        "command": "asciidocPlantumlLive.editSource",
+        "title": "Edit Source",
+        "category": "AsciiDoc & PlantUML",
+        "icon": "$(code)"
+      },
+      {
+        "command": "asciidocPlantumlLive.showSource",
+        "title": "Edit Source in Place",
+        "category": "AsciiDoc & PlantUML",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "asciidocPlantumlLive.exportSvg",
+        "title": "Export Diagram as SVG",
+        "category": "AsciiDoc & PlantUML",
+        "icon": "$(save-as)"
+      },
+      {
+        "command": "asciidocPlantumlLive.save",
+        "title": "Save the File Shown in the Preview",
+        "category": "AsciiDoc & PlantUML"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "asciidocPlantumlLive.openPreview",
+          "alt": "asciidocPlantumlLive.openPreviewToSide",
+          "when": "editorLangId == plantuml && !activeCustomEditorId",
+          "group": "navigation"
+        },
+        {
+          "command": "asciidocPlantumlLive.editSource",
+          "alt": "asciidocPlantumlLive.showSource",
+          "when": "activeCustomEditorId == asciidocPlantumlLive.editor",
+          "group": "navigation@1"
+        },
+        {
+          "command": "asciidocPlantumlLive.exportSvg",
+          "when": "activeCustomEditorId == asciidocPlantumlLive.editor",
+          "group": "navigation@2"
+        },
+        {
+          "command": "asciidocPlantumlLive.openPreview",
+          "alt": "asciidocPlantumlLive.openPreviewToSide",
+          "when": "resourceExtname =~ /^\\.(adoc|asciidoc|asc)$/ && !activeCustomEditorId",
+          "group": "navigation"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "asciidocPlantumlLive.openPreview",
+          "when": "resourceLangId == plantuml",
+          "group": "navigation"
+        },
+        {
+          "command": "asciidocPlantumlLive.openPreview",
+          "when": "resourceExtname =~ /^\\.(adoc|asciidoc|asc)$/",
+          "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "asciidocPlantumlLive.openPreview",
+          "when": "(editorLangId == plantuml || resourceExtname =~ /^\\.(adoc|asciidoc|asc)$/) &&!activeCustomEditorId"
+        },
+        {
+          "command": "asciidocPlantumlLive.openPreviewToSide",
+          "when": "editorLangId == plantuml || activeCustomEditorId == asciidocPlantumlLive.editor || resourceExtname =~ /^\\.(adoc|asciidoc|asc)$/"
+        },
+        {
+          "command": "asciidocPlantumlLive.editSource",
+          "when": "activeCustomEditorId == asciidocPlantumlLive.editor"
+        },
+        {
+          "command": "asciidocPlantumlLive.showSource",
+          "when": "activeCustomEditorId == asciidocPlantumlLive.editor"
+        },
+        {
+          "command": "asciidocPlantumlLive.exportSvg",
+          "when": "editorLangId == plantuml || asciidocPlantumlLive.previewFocused"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "asciidocPlantumlLive.save",
+        "key": "ctrl+s",
+        "mac": "cmd+s",
+        "when": "activeCustomEditorId == asciidocPlantumlLive.editor"
+      },
+      {
+        "command": "asciidocPlantumlLive.openPreviewToSide",
+        "key": "alt+d",
+        "when": "editorLangId == plantuml || (resourceExtname =~ /^\\.(adoc|asciidoc|asc)$/ && editorTextFocus)"
+      }
+    ],
+    "configuration": {
+      "title": "AsciiDoc & PlantUML Live Editor",
+      "properties": {
+        "asciidocPlantumlLive.theme": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "light",
+            "dark"
+          ],
+          "enumDescriptions": [
+            "Follow the VS Code color theme",
+            "Always render with the light PlantUML theme",
+            "Always render with the dark PlantUML theme"
+          ],
+          "default": "auto",
+          "description": "Color scheme used when rendering diagrams."
+        },
+        "asciidocPlantumlLive.renderDelay": {
+          "type": "number",
+          "default": 300,
+          "minimum": 0,
+          "description": "Delay in milliseconds after the last edit before the preview re-renders."
+        },
+        "asciidocPlantumlLive.resolveIncludes": {
+          "type": "boolean",
+          "default": true,
+          "description": "Inline local `!include` files before rendering (the in-browser engine cannot read files itself)."
+        },
+        "asciidocPlantumlLive.asciidoc.safeMode": {
+          "type": "string",
+          "enum": [
+            "safe",
+            "unsafe"
+          ],
+          "default": "safe",
+          "enumDescriptions": [
+            "include:: only reads files inside the document folder",
+            "include:: may read any file"
+          ],
+          "markdownDescription": "Asciidoctor safe mode for the AsciiDoc preview. Use `unsafe` if your documents include files from parent folders."
+        }
+      }
+    },
+    "customEditors": [
+      {
+        "viewType": "asciidocPlantumlLive.editor",
+        "displayName": "AsciiDoc & PlantUML Live Editor",
+        "selector": [
+          {
+            "filenamePattern": "*.puml"
+          },
+          {
+            "filenamePattern": "*.plantuml"
+          },
+          {
+            "filenamePattern": "*.pu"
+          },
+          {
+            "filenamePattern": "*.iuml"
+          },
+          {
+            "filenamePattern": "*.wsd"
+          },
+          {
+            "filenamePattern": "*.adoc"
+          },
+          {
+            "filenamePattern": "*.asciidoc"
+          },
+          {
+            "filenamePattern": "*.asc"
+          }
+        ],
+        "priority": {
+          "textEditor": "default",
+          "diffEditor": "default"
+        }
+      }
+    ]
+  },
+  "plantumlJs": {
+    "version": "1.2026.9"
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "npm run fetch-runtime && npm run copy-monaco && npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "fetch-runtime": "node ./scripts/fetch-runtime.mjs",
+    "package": "vsce package",
+    "copy-monaco": "node ./scripts/copy-monaco.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.2.1",
+    "fflate": "^0.8.2",
+    "monaco-editor": "^0.52.2",
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "@asciidoctor/core": "^4.1.1"
+  }
+}

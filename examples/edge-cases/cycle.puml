@@ -1,0 +1,6 @@
+' a.iuml and b.iuml include each other. The preview breaks the cycle and
+' leaves a comment where it did:
+'   ' [asciidoc-plantuml-live-editor] skipped recursive include: a.iuml
+@startuml
+!include a.iuml
+@enduml

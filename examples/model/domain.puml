@@ -1,0 +1,12 @@
+' Class diagram assembled from files in this folder and ../shared.
+'
+'   domain.puml
+'   ├─ order.iuml
+'   │  └─ customer.iuml
+'   │     └─ ../shared/styles.iuml ─ colors.iuml
+'   └─ customer.iuml (skipped: already included once)
+@startuml
+title Domain model
+!include order.iuml
+!include_once customer.iuml
+@enduml

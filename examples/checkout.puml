@@ -1,0 +1,15 @@
+' Combines shared participants with fragments picked from a library by id.
+'
+'   checkout.puml
+'   ├─ shared/styles.iuml ─ shared/colors.iuml
+'   ├─ shared/actors.iuml ─ shared/styles.iuml (skipped: already included once)
+'   ├─ shared/library.puml!auth
+'   └─ shared/library.puml!billing
+@startuml
+title Checkout
+!include_once shared/styles.iuml
+!include shared/actors.iuml
+!include shared/library.puml!auth
+== Checkout ==
+!include shared/library.puml!billing
+@enduml

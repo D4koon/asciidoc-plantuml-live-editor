@@ -1,0 +1,38 @@
+= Shop Manual
+:toc:
+
+// Include chain:
+//
+//   manual.adoc
+//   ├─ chapters/01-introduction.adoc
+//   │  └─ chapters/snippets/tip.adoc
+//   └─ chapters/02-architecture.adoc
+//      ├─ chapters/sections/components.adoc   ([plantuml] with !include ../../../shared/styles.iuml)
+//      └─ plantuml::../model/domain.puml[]     (order.iuml -> customer.iuml -> styles.iuml -> colors.iuml)
+//
+// Diagrams from included files are read-only in the preview; the one at the
+// end of this file can be edited there.
+
+include::chapters/01-introduction.adoc[]
+
+include::chapters/02-architecture.adoc[]
+
+== Checkout
+
+This diagram is written in this file, so you can click, rename and delete
+in the preview. Its participants come from `shared/actors.iuml`, which
+includes `styles.iuml`, which includes `colors.iuml`.
+Change1
+
+[#checkout-flow]
+.Checkout (editable)
+[plantuml]
+----
+@startuml
+!include ../shared/actors.iuml
+User -> App : add to cart
+App -> DB : reserve stock
+DB --> App : reserved
+App --> User : cart updated
+@enduml
+----

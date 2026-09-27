@@ -1,0 +1,245 @@
+/* AsciiDoc document styles, themed with VS Code's colors (similar to the Markdown preview). */
+
+.adoc {
+  max-width: 980px;
+  margin: 0 auto;
+  font-family: var(--vscode-markdown-font-family, var(--vscode-font-family));
+  font-size: var(--vscode-markdown-font-size, 14px);
+  line-height: 1.6;
+  color: var(--vscode-editor-foreground);
+  word-wrap: break-word;
+}
+
+.adoc h1,
+.adoc h2,
+.adoc h3,
+.adoc h4,
+.adoc h5,
+.adoc h6 {
+  margin: 1.4em 0 0.6em;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.adoc h1 {
+  font-size: 2em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+}
+
+.adoc h2 {
+  font-size: 1.5em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+}
+
+.adoc h3 {
+  font-size: 1.25em;
+}
+
+.adoc p,
+.adoc .paragraph,
+.adoc .ulist,
+.adoc .olist,
+.adoc .dlist,
+.adoc table.tableblock {
+  margin: 0 0 1em;
+}
+
+.adoc a {
+  color: var(--vscode-textLink-foreground);
+  text-decoration: none;
+}
+
+.adoc a:hover {
+  color: var(--vscode-textLink-activeForeground);
+  text-decoration: underline;
+}
+
+.adoc code {
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
+  background: var(--vscode-textCodeBlock-background, rgba(128, 128, 128, 0.15));
+  font-family: var(--vscode-editor-font-family);
+  font-size: 0.9em;
+}
+
+.adoc pre {
+  margin: 0;
+  padding: 12px 16px;
+  overflow-x: auto;
+  border-radius: 4px;
+  background: var(--vscode-textCodeBlock-background, rgba(128, 128, 128, 0.15));
+  font-family: var(--vscode-editor-font-family);
+  font-size: var(--vscode-editor-font-size);
+  line-height: 1.45;
+}
+
+.adoc pre code {
+  padding: 0;
+  background: none;
+  font-size: inherit;
+}
+
+.adoc .listingblock,
+.adoc .literalblock,
+.adoc .imageblock,
+.adoc .sidebarblock,
+.adoc .exampleblock,
+.adoc .quoteblock,
+.adoc .admonitionblock {
+  margin: 0 0 1.2em;
+}
+
+.adoc .title {
+  margin: 0.4em 0;
+  font-style: italic;
+  color: var(--vscode-descriptionForeground);
+}
+
+.adoc .imageblock .content {
+  text-align: center;
+}
+
+.adoc img {
+  max-width: 100%;
+}
+
+.adoc blockquote {
+  margin: 0;
+  padding: 0 1em;
+  border-left: 4px solid var(--vscode-textBlockQuote-border, rgba(128, 128, 128, 0.5));
+  color: var(--vscode-textBlockQuote-foreground, inherit);
+}
+
+.adoc .quoteblock .attribution {
+  margin-top: 0.4em;
+  font-size: 0.9em;
+  color: var(--vscode-descriptionForeground);
+}
+
+.adoc .sidebarblock,
+.adoc .exampleblock > .content {
+  padding: 12px 16px;
+  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+  border-radius: 4px;
+}
+
+.adoc .admonitionblock > table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.adoc .admonitionblock td.icon {
+  width: 80px;
+  padding-right: 12px;
+  vertical-align: top;
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 0.85em;
+  border-right: 3px solid var(--vscode-focusBorder);
+}
+
+.adoc .admonitionblock.warning td.icon,
+.adoc .admonitionblock.caution td.icon {
+  border-right-color: var(--vscode-editorWarning-foreground, #cca700);
+}
+
+.adoc .admonitionblock.important td.icon {
+  border-right-color: var(--vscode-editorError-foreground, #f14c4c);
+}
+
+.adoc .admonitionblock td.content {
+  padding-left: 12px;
+}
+
+.adoc .admonitionblock td.content > :last-child > :last-child {
+  margin-bottom: 0;
+}
+
+.adoc table.tableblock {
+  border-collapse: collapse;
+}
+
+.adoc table.tableblock th,
+.adoc table.tableblock td {
+  padding: 6px 12px;
+  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+  vertical-align: top;
+}
+
+.adoc table.tableblock th {
+  font-weight: 600;
+}
+
+.adoc table.tableblock p {
+  margin: 0;
+}
+
+.adoc #toc {
+  margin: 0 0 1.5em;
+  padding: 8px 16px;
+  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+  border-radius: 4px;
+}
+
+.adoc #toc ul {
+  margin: 0;
+  padding-left: 1.2em;
+}
+
+.adoc .dlist dt {
+  font-weight: 600;
+}
+
+.adoc .dlist dd {
+  margin: 0 0 0.6em 1.5em;
+}
+
+.adoc hr {
+  border: none;
+  border-top: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+}
+
+.adoc .pv-adoc-diagram {
+  margin: 0 auto;
+  text-align: initial;
+}
+
+.pv-adoc-error {
+  padding: 12px;
+  color: var(--vscode-errorForeground);
+  white-space: pre-wrap;
+}
+
+/* Editing in the rendered view: blocks with a source mapping can be edited. */
+.adoc [data-src] {
+  cursor: text;
+  border-radius: 3px;
+}
+
+.adoc [data-src]:hover:not(:has([data-src]:hover)) {
+  background: var(--vscode-editor-hoverHighlightBackground, rgba(128, 128, 128, 0.1));
+}
+
+.adoc .pv-editing {
+  display: none;
+}
+
+.adoc .pv-block-edit {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0.5em 0 1em;
+  padding: 6px 8px;
+  resize: none;
+  overflow: hidden;
+  border: 1px solid var(--vscode-focusBorder, #0078d4);
+  border-radius: 3px;
+  outline: none;
+  background: var(--vscode-input-background, #fff);
+  color: var(--vscode-input-foreground, inherit);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: var(--vscode-editor-font-size, 13px);
+  line-height: 1.5;
+}

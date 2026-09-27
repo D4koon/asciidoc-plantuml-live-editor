@@ -1,0 +1,890 @@
+import * as path from 'path';
+import * as vscode from 'vscode';
+import { ElementRef, LineEdit, locateLine, planDelete, planRename, RenameRequest } from './diagramEdits';
+import { AsciiDocResult, isAsciiDoc, listAsciiDocIncludes, renderAsciiDoc } from './asciidoc';
+import { IncludeNode, resolveIncludes } from './includes';
+import { filePathOf, isReadOnly } from './versions';
+import { DiffMessage, DiffPairs, DiffScroll, DiffSide } from './diffs';
+
+interface PreviewState {
+  uri: string;
+}
+
+/** A change made in the split view's embedded editor, relative to the text before the edit. */
+interface SourceChange {
+  offset: number;
+  length: number;
+  text: string;
+}
+
+/** Messages sent from the webview to the extension. */
+type WebviewMessage =
+  | { type: 'ready' }
+  | { type: 'svg'; requestId: number; svgs: string[] }
+  | { type: 'openSource' }
+  | { type: 'edit'; uri: string; version: number; changes: SourceChange[]; text: string }
+  | { type: 'split'; split: boolean }
+  | { type: 'select'; ref: ElementRef; expanded?: ExpandedDiagram }
+  | { type: 'rename'; request: RenameRequest; expanded?: ExpandedDiagram }
+  | { type: 'delete'; ref: ElementRef; expanded?: ExpandedDiagram }
+  | { type: 'revealLine'; line: number; uri?: string }
+  | { type: 'editBlock'; start: number; end: number; oldText: string; newText: string; uri?: string }
+  | { type: 'openLink'; href: string }
+  | { type: 'show'; uri: string; line?: number }
+  | DiffScroll;
+
+/**
+ * A diagram with includes as the engine saw it: its lines, and for each the
+ * file (URI) and line it came from, or null for lines added along the way.
+ */
+interface ExpandedDiagram {
+  lines: string[];
+  origins: ([string, number] | null)[];
+}
+
+const SPLIT_STATE_KEY = 'asciidocPlantumlLive.split';
+
+class Preview implements vscode.Disposable, DiffSide {
+  private updateTimer: ReturnType<typeof setTimeout> | undefined;
+  private ready = false;
+  // The panel's getters throw once it is disposed, so its state is mirrored here.
+  private disposed = false;
+  private active = false;
+  private nextRequestId = 1;
+  private readonly svgRequests = new Map<number, (svgs: string[]) => void>();
+  private readonly disposables: vscode.Disposable[] = [];
+  private readonly onDisposeEmitter = new vscode.EventEmitter<void>();
+  readonly onDispose = this.onDisposeEmitter.event;
+  private readonly onDidUpdateEmitter = new vscode.EventEmitter<void>();
+  /** Fired after each render, once the files it includes are known. */
+  readonly onDidUpdate = this.onDidUpdateEmitter.event;
+  /** When the preview was opened, to pair the two sides of a diff. */
+  readonly created = Date.now();
+  private readonly onDidScrollEmitter = new vscode.EventEmitter<DiffScroll>();
+  readonly onDidScroll = this.onDidScrollEmitter.event;
+  /** The changes to show when this preview is a side of a diff. */
+  private diff: DiffMessage | undefined;
+  /** `asciidoc`: a whole document with embedded diagrams; `plantuml`: diagrams only. */
+  readonly format: 'plantuml' | 'asciidoc';
+  /** A version that can't be edited, e.g. the old side of a diff: no split view, no editing in the preview. */
+  private readonly readOnly: boolean;
+
+  // The tab always belongs to `uri` (the root). Navigating the overview of
+  // includes shows another file in the tab: `shown` is the file in the split
+  // view's editor, `rendered` the file the preview shows. They differ for
+  // fragments (e.g. a file of skinparams), which are previewed through the root.
+  private shown: vscode.Uri;
+  private rendered: vscode.Uri;
+  /** Files the root or the rendered file includes (URIs); their changes re-render live. */
+  private dependencies = new Set<string>();
+  /** Set while the editor was switched by a click in the preview: the file the preview keeps showing. */
+  private keptPreview: vscode.Uri | undefined;
+  /** Files other than the root edited in this tab, to remind about unsaved changes. */
+  private readonly edited = new Set<string>();
+
+  // Split view sync. Edits from the embedded editor are applied one at a time;
+  // while any are pending, document changes are not echoed back to the webview.
+  private editQueue: Promise<void> = Promise.resolve();
+  private pendingEdits = 0;
+  /** Version of the last embedded-editor edit applied to the document. */
+  private appliedVersion = 0;
+  /** The source text the webview is known to show. */
+  private webviewSource: string | undefined;
+
+  constructor(
+    readonly panel: vscode.WebviewPanel,
+    readonly uri: vscode.Uri,
+    private readonly extensionUri: vscode.Uri,
+    /** `editor`: the in-place custom editor; `panel`: a preview beside the text editor. */
+    readonly kind: 'editor' | 'panel',
+    private readonly globalState: vscode.Memento
+  ) {
+    const mediaRoot = vscode.Uri.joinPath(extensionUri, 'media');
+    this.format = isAsciiDoc(uri) ? 'asciidoc' : 'plantuml';
+    this.readOnly = isReadOnly(uri);
+    this.shown = this.rendered = uri;
+    // An AsciiDoc document may show images from its folder and the workspace.
+    const documentRoots =
+      this.format === 'asciidoc'
+        ? [this.folder(), ...(vscode.workspace.workspaceFolders ?? []).map((f) => f.uri)]
+        : [];
+    panel.webview.options = { enableScripts: true, localResourceRoots: [mediaRoot, ...documentRoots] };
+    if (kind === 'panel') {
+      panel.iconPath = vscode.Uri.joinPath(mediaRoot, 'icon.svg');
+      panel.title = `Preview ${basename(uri)}`;
+    }
+    panel.webview.html = this.getHtml(panel.webview);
+
+    this.disposables.push(
+      panel.onDidDispose(() => this.dispose()),
+      panel.onDidChangeViewState(() => this.updateFocusContext()),
+      panel.webview.onDidReceiveMessage((message: WebviewMessage) => this.onMessage(message))
+    );
+    this.updateFocusContext();
+  }
+
+  get isActive(): boolean {
+    return this.active;
+  }
+
+  /** The URIs of the files shown: the tab's own and every file it includes. */
+  files(): string[] {
+    return [this.uri.toString(), this.rendered.toString(), ...this.dependencies];
+  }
+
+  /** Shows the changes of this side of a diff (or, without `side`, no longer). */
+  postDiff(message: DiffMessage | { type: 'diff'; side?: undefined } | DiffScroll): void {
+    if (message.type === 'diff') this.diff = message.side ? message : undefined;
+    if (this.ready && !this.disposed) void this.panel.webview.postMessage(message);
+  }
+
+  /** Whether a change to `key` (a URI) affects this preview. */
+  dependsOn(key: string): boolean {
+    return key === this.shown.toString() || this.dependencies.has(key);
+  }
+
+  scheduleUpdate(immediate = false): void {
+    if (this.disposed) {
+      return;
+    }
+    clearTimeout(this.updateTimer);
+    const delay = immediate
+      ? 0
+      : vscode.workspace.getConfiguration('asciidocPlantumlLive').get<number>('renderDelay', 300);
+    this.updateTimer = setTimeout(() => void this.update(), delay);
+  }
+
+  /** Called when this preview's own document changed. */
+  documentChanged(immediate = false): void {
+    void this.syncSource();
+    this.scheduleUpdate(immediate);
+  }
+
+  /** Asks the webview for the SVG markup of every diagram currently rendered. */
+  requestSvgs(): Promise<string[]> {
+    const requestId = this.nextRequestId++;
+    return new Promise((resolve) => {
+      this.svgRequests.set(requestId, resolve);
+      void this.panel.webview.postMessage({ type: 'requestSvg', requestId });
+    });
+  }
+
+  private async update(): Promise<void> {
+    if (!this.ready) {
+      return;
+    }
+    const config = vscode.workspace.getConfiguration('asciidocPlantumlLive');
+    const shown = this.shown;
+    const target = await this.renderTarget(shown);
+    const format = isAsciiDoc(target) ? 'asciidoc' : 'plantuml';
+    const document = await vscode.workspace.openTextDocument(target);
+    let message: Record<string, unknown>;
+    let includes: IncludeNode[];
+    if (format === 'asciidoc') {
+      let result: AsciiDocResult;
+      try {
+        result = await renderAsciiDoc(document.getText(), target);
+      } catch (e) {
+        result = { html: `<div class="pv-adoc-error">AsciiDoc conversion failed: ${String(e)}</div>`, diagrams: [], blocks: [], includes: [] };
+      }
+      message = { ...result };
+      includes = result.includes;
+    } else {
+      let text = document.getText();
+      let lineMap: number[] | undefined;
+      // Resolved even when not inlined, for the split view's overview of includes.
+      const resolved = await resolveIncludes(text, target);
+      if (config.get<boolean>('resolveIncludes', true)) {
+        ({ text, lineMap } = resolved);
+      }
+      // lineMap maps rendered lines back to document lines; omitted when they are identical.
+      // origins tells which file each line came from, for lines of included files.
+      message = {
+        text,
+        lineMap: lineMap?.every((origin, i) => origin === i) ? undefined : lineMap,
+        origins: lineMap && resolved.origins.files.length > 1 ? resolved.origins : undefined,
+      };
+      includes = resolved.includes;
+    }
+
+    // The overview always shows the root's includes.
+    const rootIncludes = target.toString() === this.uri.toString() ? includes : await this.listIncludes(this.uri);
+    const dependencies = new Set<string>();
+    const collect = (nodes: IncludeNode[]) =>
+      nodes.forEach((n) => {
+        if (n.uri && n.status === 'ok') dependencies.add(n.uri);
+        collect(n.children);
+      });
+    collect(rootIncludes);
+    collect(includes);
+    if (this.disposed || shown !== this.shown) {
+      return; // closed, or navigated elsewhere, while the files were loading
+    }
+    this.dependencies = dependencies;
+    this.rendered = target;
+    const dirty = vscode.workspace.textDocuments.filter((d) => d.isDirty).map((d) => d.uri.toString());
+    void this.panel.webview.postMessage({
+      type: 'update',
+      uri: this.uri.toString(),
+      format,
+      ...message,
+      includes: rootIncludes,
+      nav: { root: this.uri.toString(), shown: shown.toString(), rendered: target.toString(), dirty },
+      theme: config.get<string>('theme', 'auto'),
+    });
+    this.onDidUpdateEmitter.fire();
+  }
+
+  /**
+   * The file to preview while `shown` is in the editor: the file itself if it
+   * renders on its own (an AsciiDoc file, or PlantUML with `@start…`),
+   * otherwise the root, which shows the fragment's effect.
+   */
+  private async renderTarget(shown: vscode.Uri): Promise<vscode.Uri> {
+    if (this.keptPreview) {
+      return this.keptPreview;
+    }
+    if (shown.toString() === this.uri.toString() || isAsciiDoc(shown)) {
+      return shown;
+    }
+    try {
+      const text = (await vscode.workspace.openTextDocument(shown)).getText();
+      return /^\s*@start\w+/m.test(text) ? shown : this.uri;
+    } catch {
+      return this.uri;
+    }
+  }
+
+  private async listIncludes(uri: vscode.Uri): Promise<IncludeNode[]> {
+    const text = (await vscode.workspace.openTextDocument(uri)).getText();
+    return isAsciiDoc(uri) ? listAsciiDocIncludes(text, uri) : (await resolveIncludes(text, uri)).includes;
+  }
+
+  /**
+   * Shows another file of the include tree in this tab (the root stays the
+   * tab's file), optionally selecting a line in the split view's editor.
+   * With `keepPreview` (a click in the preview) only the editor changes and
+   * the preview stays as it is; otherwise the preview follows the file.
+   */
+  private async show(uri: vscode.Uri, line: number | undefined, keepPreview = false): Promise<void> {
+    const kept = keepPreview ? (this.keptPreview ?? this.rendered) : undefined;
+    const previewChanges = kept?.toString() !== this.keptPreview?.toString();
+    if (uri.toString() !== this.shown.toString()) {
+      try {
+        await vscode.workspace.openTextDocument(uri);
+      } catch {
+        void vscode.window.showWarningMessage(`Cannot open ${basename(uri)}.`);
+        return;
+      }
+      this.shown = uri;
+      this.keptPreview = kept;
+      this.webviewSource = undefined;
+      this.appliedVersion = 0; // the webview restarts its edit versions for the new file
+      await this.syncSource();
+      this.scheduleUpdate(true);
+    } else if (previewChanges) {
+      // E.g. the overview picks the file already in the editor: preview it now.
+      this.keptPreview = kept;
+      this.scheduleUpdate(true);
+    }
+    if (line !== undefined) {
+      await this.revealLine(line, uri);
+    }
+  }
+
+  /** Saves the file shown in the split view's editor (Ctrl+S in this tab). */
+  async save(): Promise<void> {
+    await (await vscode.workspace.openTextDocument(this.shown)).save();
+  }
+
+  /** Sends the shown file's text to the split view's embedded editor if it differs. */
+  private async syncSource(): Promise<void> {
+    if (this.kind !== 'editor' || !this.ready || this.pendingEdits > 0) {
+      return;
+    }
+    const uri = this.shown;
+    const document = await vscode.workspace.openTextDocument(uri);
+    const text = document.getText();
+    if (this.disposed || this.pendingEdits > 0 || uri !== this.shown || text === this.webviewSource) {
+      return;
+    }
+    this.webviewSource = text;
+    void this.panel.webview.postMessage({
+      type: 'source',
+      uri: uri.toString(),
+      name: basename(uri),
+      language: isAsciiDoc(uri) ? 'asciidoc' : 'plantuml',
+      text,
+      eol: document.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n',
+      // Lets the webview drop this if it has made edits we have not applied yet.
+      ackVersion: this.appliedVersion,
+    });
+  }
+
+  private enqueueEdit(message: Extract<WebviewMessage, { type: 'edit' }>): void {
+    this.pendingEdits++;
+    this.webviewSource = message.text;
+    this.editQueue = this.editQueue
+      .then(() => this.applyEdit(message))
+      .catch((e) => {
+        void vscode.window.showErrorMessage(`Could not apply the edit: ${e}`);
+      })
+      .finally(() => {
+        this.pendingEdits--;
+        if (this.pendingEdits === 0) {
+          // Pick up any change made elsewhere while the edits were in flight.
+          void this.syncSource();
+        }
+      });
+  }
+
+  private async applyEdit({ uri: target, version, changes, text }: Extract<WebviewMessage, { type: 'edit' }>): Promise<void> {
+    // Edits name their file: ones still queued after navigating belong to the previous file.
+    const uri = vscode.Uri.parse(target);
+    const document = await vscode.workspace.openTextDocument(uri);
+    const edit = new vscode.WorkspaceEdit();
+    for (const change of changes) {
+      const range = new vscode.Range(
+        document.positionAt(change.offset),
+        document.positionAt(change.offset + change.length)
+      );
+      edit.replace(uri, range, change.text);
+    }
+    await vscode.workspace.applyEdit(edit);
+    if (document.getText() !== text) {
+      // Out of sync (e.g. a concurrent change elsewhere): the embedded editor wins.
+      const full = new vscode.WorkspaceEdit();
+      full.replace(uri, new vscode.Range(document.positionAt(0), document.positionAt(document.getText().length)), text);
+      await vscode.workspace.applyEdit(full);
+    }
+    if (target !== this.uri.toString()) {
+      this.edited.add(target);
+    }
+    if (target === this.shown.toString()) {
+      this.appliedVersion = version;
+    }
+  }
+
+  /** The document's folder on disk; images of a git version come from the working copy. */
+  private folder(): vscode.Uri {
+    const file = filePathOf(this.uri);
+    return file ? vscode.Uri.file(path.dirname(file)) : vscode.Uri.joinPath(this.uri, '..');
+  }
+
+  private onMessage(message: WebviewMessage): void {
+    if (this.readOnly && ['edit', 'rename', 'delete', 'editBlock'].includes(message.type)) {
+      return; // the webview offers no editing here; don't act on stray messages
+    }
+    switch (message.type) {
+      case 'ready':
+        this.ready = true;
+        this.webviewSource = undefined;
+        this.appliedVersion = 0; // a reloaded webview restarts its edit versions
+        if (this.diff) void this.panel.webview.postMessage(this.diff);
+        void this.syncSource();
+        this.scheduleUpdate(true);
+        break;
+      case 'edit':
+        this.enqueueEdit(message);
+        break;
+      case 'split':
+        void this.globalState.update(SPLIT_STATE_KEY, message.split);
+        break;
+      case 'select':
+        void (message.expanded ? this.revealExpanded(message.expanded, message.ref) : this.revealElement(message.ref));
+        break;
+      case 'rename': {
+        const plan = (lines: string[]) => planRename(lines, message.request);
+        const what = `“${message.request.oldText}”`;
+        void (message.expanded ? this.editExpanded(message.expanded, plan, what) : this.editDiagram(plan, what));
+        break;
+      }
+      case 'delete': {
+        const plan = (lines: string[]) => planDelete(lines, message.ref);
+        void (message.expanded ? this.editExpanded(message.expanded, plan, 'this connection') : this.editDiagram(plan, 'this connection'));
+        break;
+      }
+      case 'revealLine':
+        void this.revealSource(message.line, message.uri ? vscode.Uri.parse(message.uri) : this.rendered);
+        break;
+      case 'editBlock':
+        void this.editBlock(message);
+        break;
+      case 'openLink':
+        void this.openLink(message.href);
+        break;
+      case 'show':
+        void this.show(vscode.Uri.parse(message.uri), message.line);
+        break;
+      case 'diffScroll':
+        if (this.diff) this.onDidScrollEmitter.fire(message);
+        break;
+      case 'svg':
+        this.svgRequests.get(message.requestId)?.(message.svgs);
+        this.svgRequests.delete(message.requestId);
+        break;
+      case 'openSource':
+        if (this.kind === 'editor') {
+          void vscode.commands.executeCommand('asciidocPlantumlLive.editSource', this.shown);
+        } else {
+          void vscode.window.showTextDocument(this.uri, { viewColumn: vscode.ViewColumn.One });
+        }
+        break;
+    }
+  }
+
+  /** Selects the source line of a clicked element in the split editor and any visible text editor. */
+  private async revealElement(ref: ElementRef): Promise<void> {
+    const uri = this.rendered;
+    const document = await vscode.workspace.openTextDocument(uri);
+    const line = locateLine(documentLines(document), ref);
+    if (line !== undefined) {
+      await this.revealSource(line, uri);
+    }
+  }
+
+  /**
+   * Shows the source of something clicked in the preview: switches the split
+   * view's editor to its file if it shows another one, and selects the line.
+   */
+  private async revealSource(line: number, uri: vscode.Uri): Promise<void> {
+    if (this.kind === 'editor' && uri.toString() !== this.shown.toString()) {
+      await this.show(uri, line, true);
+    } else {
+      await this.revealLine(line, uri);
+    }
+  }
+
+  /**
+   * Selects a line of `uri` (by default the previewed file) in the split
+   * editor, if it shows that file, and in any visible text editor.
+   */
+  private async revealLine(line: number, uri = this.rendered): Promise<void> {
+    const document = await vscode.workspace.openTextDocument(uri);
+    if (line >= document.lineCount || this.disposed) {
+      return;
+    }
+    if (uri.toString() === this.shown.toString()) {
+      void this.panel.webview.postMessage({ type: 'reveal', line });
+    }
+    const range = document.lineAt(line).range;
+    for (const editor of vscode.window.visibleTextEditors) {
+      if (editor.document.uri.toString() === uri.toString()) {
+        editor.selection = new vscode.Selection(range.start, range.end);
+        editor.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+      }
+    }
+  }
+
+  /** Opens a link clicked in an AsciiDoc preview: web links externally, relative ones in VS Code. */
+  private async openLink(href: string): Promise<void> {
+    if (/^(https?|mailto):/i.test(href)) {
+      await vscode.env.openExternal(vscode.Uri.parse(href));
+      return;
+    }
+    if (/^[a-z][\w+.-]*:/i.test(href)) {
+      return; // other schemes (javascript:, file:, …) are ignored
+    }
+    const [target] = href.split('#');
+    if (target) {
+      await vscode.commands.executeCommand('vscode.open', vscode.Uri.joinPath(this.uri, '..', decodeURIComponent(target)));
+    }
+  }
+
+  /**
+   * Replaces the lines of a block edited in the AsciiDoc preview. An empty
+   * text removes the block. Refused if the lines changed since the preview
+   * was rendered, since the edit would then land in the wrong place.
+   */
+  private async editBlock({ start, end, oldText, newText, uri: file }: Extract<WebviewMessage, { type: 'editBlock' }>): Promise<void> {
+    // Blocks of included files name their file.
+    const uri = file ? vscode.Uri.parse(file) : this.rendered;
+    const document = await vscode.workspace.openTextDocument(uri);
+    const current = end < document.lineCount ? documentLines(document).slice(start, end + 1).join('\n') : undefined;
+    if (current !== oldText) {
+      void vscode.window.showInformationMessage('AsciiDoc: the document changed while you were editing. Please try again.');
+      return;
+    }
+    const edit = new vscode.WorkspaceEdit();
+    const eol = document.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n';
+    const lines = new vscode.Range(start, 0, end, document.lineAt(end).text.length);
+    if (newText.trim()) {
+      edit.replace(uri, lines, newText.replace(/\r\n|\r|\n/g, eol));
+    } else if (end + 1 < document.lineCount) {
+      // Removing the block also takes the blank line that separated it from the next one.
+      const next = end + 1 < document.lineCount - 1 && !document.lineAt(end + 1).text.trim() ? end + 2 : end + 1;
+      edit.delete(uri, new vscode.Range(start, 0, next, 0));
+    } else {
+      edit.delete(uri, lines);
+    }
+    await vscode.workspace.applyEdit(edit);
+    this.noteEdited(uri);
+  }
+
+  private noteEdited(uri: vscode.Uri): void {
+    if (uri.toString() !== this.uri.toString()) {
+      this.edited.add(uri.toString());
+    }
+  }
+
+  /** Applies line edits computed from the document; `what` names the target in error messages. */
+  private async editDiagram(plan: (lines: string[]) => LineEdit[] | undefined, what: string): Promise<void> {
+    const uri = this.rendered;
+    const document = await vscode.workspace.openTextDocument(uri);
+    const edits = plan(documentLines(document));
+    if (!edits) {
+      void vscode.window.showInformationMessage(
+        `PlantUML: couldn't find ${what} in the source. Edit it in the text editor instead.`
+      );
+      return;
+    }
+    const edit = new vscode.WorkspaceEdit();
+    for (const { line, text } of edits) {
+      if (text !== undefined) {
+        edit.replace(uri, document.lineAt(line).range, text);
+      } else if (line + 1 < document.lineCount) {
+        edit.delete(uri, new vscode.Range(line, 0, line + 1, 0));
+      } else if (line > 0) {
+        edit.delete(uri, new vscode.Range(document.lineAt(line - 1).range.end, document.lineAt(line).range.end));
+      } else {
+        edit.delete(uri, document.lineAt(line).range);
+      }
+    }
+    await vscode.workspace.applyEdit(edit);
+    this.noteEdited(uri);
+  }
+
+  /** Selects the source line of an element clicked in a diagram with includes, in whichever file it is. */
+  private async revealExpanded(expanded: ExpandedDiagram, ref: ElementRef): Promise<void> {
+    const line = locateLine(expanded.lines, ref);
+    const origin = line === undefined ? undefined : expanded.origins[line];
+    if (origin) {
+      await this.revealSource(origin[1], vscode.Uri.parse(origin[0]));
+    }
+  }
+
+  /**
+   * Edits a diagram that includes other files: plans the edits on the text
+   * the engine saw and applies each changed line to the file it came from,
+   * so e.g. renaming a participant declared in an included file updates its
+   * uses everywhere in the diagram. Refused if any of those lines changed.
+   */
+  private async editExpanded(
+    expanded: ExpandedDiagram,
+    plan: (lines: string[]) => LineEdit[] | undefined,
+    what: string
+  ): Promise<void> {
+    const edits = plan(expanded.lines);
+    if (!edits || edits.some(({ line }) => !expanded.origins[line])) {
+      void vscode.window.showInformationMessage(
+        `PlantUML: couldn't find ${what} in the source. Edit it in the text editor instead.`
+      );
+      return;
+    }
+    const workspaceEdit = new vscode.WorkspaceEdit();
+    const files = new Set<string>();
+    const done = new Set<string>();
+    for (const { line, text } of edits) {
+      const [file, fileLine] = expanded.origins[line]!;
+      if (done.has(`${file}:${fileLine}`)) {
+        continue; // a file included twice (!include_many): its line is edited once
+      }
+      done.add(`${file}:${fileLine}`);
+      const uri = vscode.Uri.parse(file);
+      const document = await vscode.workspace.openTextDocument(uri);
+      if (fileLine >= document.lineCount || document.lineAt(fileLine).text !== expanded.lines[line]) {
+        void vscode.window.showInformationMessage(`PlantUML: ${basename(uri)} changed. Please try again.`);
+        return;
+      }
+      files.add(file);
+      if (text !== undefined) {
+        workspaceEdit.replace(uri, document.lineAt(fileLine).range, text);
+      } else if (fileLine + 1 < document.lineCount) {
+        workspaceEdit.delete(uri, new vscode.Range(fileLine, 0, fileLine + 1, 0));
+      } else {
+        workspaceEdit.delete(uri, document.lineAt(fileLine).rangeIncludingLineBreak);
+      }
+    }
+    await vscode.workspace.applyEdit(workspaceEdit);
+    files.forEach((file) => this.noteEdited(vscode.Uri.parse(file)));
+  }
+
+  private updateFocusContext(): void {
+    this.active = this.panel.active;
+    void vscode.commands.executeCommand('setContext', 'asciidocPlantumlLive.previewFocused', this.active);
+  }
+
+  private getHtml(webview: vscode.Webview): string {
+    const media = (...parts: string[]) =>
+      webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'media', ...parts));
+    const nonce = createNonce();
+    const csp = [
+      `default-src 'none'`,
+      `img-src ${webview.cspSource} data: https:`,
+      `style-src ${webview.cspSource} 'unsafe-inline'`,
+      `font-src ${webview.cspSource} data:`,
+      // Viz.js compiles Graphviz from an embedded WebAssembly module.
+      `script-src 'nonce-${nonce}' ${webview.cspSource} 'wasm-unsafe-eval'`,
+      // Monaco's language worker is bootstrapped from a blob URL.
+      `worker-src blob:`,
+    ].join('; ');
+    const split = this.globalState.get<boolean>(SPLIT_STATE_KEY, false);
+    // Relative image paths in AsciiDoc resolve against the document's folder.
+    const base =
+      this.format === 'asciidoc' ? `\n  <base href="${webview.asWebviewUri(this.folder())}/">` : '';
+
+    return /* html */ `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="${csp}">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">${base}
+  <link rel="stylesheet" href="${media('preview.css')}">
+  <link rel="stylesheet" href="${media('asciidoc.css')}">
+  <title>PlantUML Preview</title>
+</head>
+<body
+  data-format="${this.format}"
+  data-kind="${this.kind}"
+  data-split="${split}"
+  data-readonly="${this.readOnly}"
+  data-engine="${media('vendor', 'plantuml.js')}"
+  data-vendor="${media('vendor')}/"
+  data-monaco="${media('monaco')}/">
+  <div id="toolbar">
+    <button id="split-toggle" title="Edit the source in this tab">Split</button>
+    <button id="zoom-out" title="Zoom out">−</button>
+    <button id="zoom-reset" title="Reset zoom">100%</button>
+    <button id="zoom-in" title="Zoom in">+</button>
+    <button id="zoom-fit" title="Fit to width">Fit</button>
+    <span id="crumbs"></span>
+    <span id="diff-nav" hidden>
+      <button class="pv-diff-prev" title="Previous change (Shift+F7)">↑</button>
+      <span class="pv-diff-count"></span>
+      <button class="pv-diff-next" title="Next change (F7)">↓</button>
+    </span>
+    <span id="status">Loading PlantUML engine…</span>
+    <button id="edit-source" title="Open the source in the VS Code text editor beside this tab">Edit Source</button>
+  </div>
+  <div id="main">
+    <div id="source">
+      <div id="source-editor"></div>
+      <details id="includes" open><summary>Includes</summary><div id="include-tree"></div></details>
+    </div>
+    <div id="divider" title="Drag to resize"></div>
+    <div id="diagrams"></div>
+  </div>
+  <script nonce="${nonce}" src="${media('vendor', 'viz-global.js')}"></script>
+  <script nonce="${nonce}" type="module" src="${media('preview.js')}"></script>
+</body>
+</html>`;
+  }
+
+  dispose(): void {
+    if (this.disposed) {
+      return;
+    }
+    this.disposed = true;
+    // Unregister first so a failure below can never leave a dead preview behind.
+    this.onDisposeEmitter.fire();
+    this.onDisposeEmitter.dispose();
+    this.onDidUpdateEmitter.dispose();
+    this.onDidScrollEmitter.dispose();
+
+    clearTimeout(this.updateTimer);
+    for (const resolve of this.svgRequests.values()) {
+      resolve([]);
+    }
+    this.svgRequests.clear();
+    if (this.active) {
+      void vscode.commands.executeCommand('setContext', 'asciidocPlantumlLive.previewFocused', false);
+    }
+    this.disposables.forEach((d) => d.dispose());
+    this.panel.dispose(); // no-op when VS Code already disposed it
+    void remindUnsaved(this.edited);
+  }
+}
+
+/**
+ * Included files edited in a preview have no tab of their own; when the
+ * preview closes, offers to save the ones that still have unsaved changes.
+ */
+async function remindUnsaved(uris: Set<string>): Promise<void> {
+  const inTabs = new Set(
+    vscode.window.tabGroups.all
+      .flatMap((g) => g.tabs)
+      .map((t) => (t.input instanceof vscode.TabInputText || t.input instanceof vscode.TabInputCustom ? t.input.uri.toString() : ''))
+  );
+  const unsaved = vscode.workspace.textDocuments.filter(
+    (d) => d.isDirty && uris.has(d.uri.toString()) && !inTabs.has(d.uri.toString())
+  );
+  if (unsaved.length === 0) {
+    return;
+  }
+  const names = unsaved.map((d) => basename(d.uri)).join(', ');
+  const choice = await vscode.window.showWarningMessage(
+    `${names} ${unsaved.length === 1 ? 'has' : 'have'} unsaved changes made in the preview.`,
+    'Save',
+    'Show'
+  );
+  if (choice === 'Save') {
+    await Promise.all(unsaved.map((d) => d.save()));
+  } else if (choice === 'Show') {
+    for (const d of unsaved) {
+      await vscode.window.showTextDocument(d, { preview: false });
+    }
+  }
+}
+
+export class PreviewManager
+  implements vscode.WebviewPanelSerializer<PreviewState>, vscode.CustomTextEditorProvider, vscode.Disposable
+{
+  static readonly viewType = 'asciidocPlantumlLive.preview';
+
+  private readonly previews = new Set<Preview>();
+  private readonly diffs = new DiffPairs();
+  private readonly disposables: vscode.Disposable[] = [];
+
+  constructor(
+    private readonly extensionUri: vscode.Uri,
+    private readonly globalState: vscode.Memento
+  ) {
+    this.disposables.push(
+      vscode.workspace.onDidChangeTextDocument((e) => this.onDocumentChanged(e.document.uri)),
+      vscode.workspace.onDidSaveTextDocument((d) => this.onDocumentChanged(d.uri, true)),
+      vscode.workspace.onDidChangeConfiguration((e) => {
+        if (e.affectsConfiguration('asciidocPlantumlLive')) {
+          this.previews.forEach((p) => p.scheduleUpdate(true));
+        }
+      })
+    );
+  }
+
+  /** Opens (or reveals) a preview panel beside the text editor. */
+  showBeside(document: vscode.TextDocument, column: vscode.ViewColumn): void {
+    const key = document.uri.toString();
+    const existing = [...this.previews].find((p) => p.kind === 'panel' && p.uri.toString() === key);
+    if (existing) {
+      existing.panel.reveal(column, true);
+      return;
+    }
+    const panel = vscode.window.createWebviewPanel(
+      PreviewManager.viewType,
+      `Preview ${basename(document.uri)}`,
+      { viewColumn: column, preserveFocus: true },
+      { enableScripts: true, retainContextWhenHidden: true }
+    );
+    this.track(new Preview(panel, document.uri, this.extensionUri, 'panel', this.globalState));
+  }
+
+  async deserializeWebviewPanel(panel: vscode.WebviewPanel, state: PreviewState | undefined): Promise<void> {
+    if (!state?.uri) {
+      panel.dispose();
+      return;
+    }
+    this.track(new Preview(panel, vscode.Uri.parse(state.uri), this.extensionUri, 'panel', this.globalState));
+  }
+
+  /** Renders a PlantUML or AsciiDoc file in place when it is opened (the default editor for *.puml, *.adoc etc.). */
+  resolveCustomTextEditor(document: vscode.TextDocument, panel: vscode.WebviewPanel): void {
+    this.track(new Preview(panel, document.uri, this.extensionUri, 'editor', this.globalState));
+  }
+
+  async exportSvg(): Promise<void> {
+    const preview = this.activePreview();
+    if (!preview) {
+      vscode.window.showWarningMessage('Open a PlantUML preview first.');
+      return;
+    }
+    const svgs = (await preview.requestSvgs()).filter((s) => s.length > 0);
+    if (svgs.length === 0) {
+      vscode.window.showWarningMessage('There is no rendered diagram to export.');
+      return;
+    }
+
+    let index = 0;
+    if (svgs.length > 1) {
+      const pick = await vscode.window.showQuickPick(
+        svgs.map((_, i) => ({ label: `Diagram ${i + 1}`, index: i })),
+        { placeHolder: 'This file contains several diagrams — choose one to export' }
+      );
+      if (!pick) {
+        return;
+      }
+      index = pick.index;
+    }
+
+    const suffix = svgs.length > 1 ? `-${index + 1}` : '';
+    const defaultUri = preview.uri.with({
+      path: preview.uri.path.replace(/(\.[^./]+)?$/, `${suffix}.svg`),
+    });
+    const target = await vscode.window.showSaveDialog({
+      defaultUri: preview.uri.scheme === 'file' ? defaultUri : undefined,
+      filters: { SVG: ['svg'] },
+    });
+    if (target) {
+      await vscode.workspace.fs.writeFile(target, new TextEncoder().encode(svgs[index]));
+      vscode.window.showInformationMessage(`Saved ${basename(target)}`);
+    }
+  }
+
+  dispose(): void {
+    this.previews.forEach((p) => p.dispose());
+    this.disposables.forEach((d) => d.dispose());
+  }
+
+  private track(preview: Preview): void {
+    this.previews.add(preview);
+    preview.onDispose(() => this.previews.delete(preview));
+    this.diffs.add(preview, this.previews);
+  }
+
+  /** Saves the file shown in the active preview tab, which may be an included file. */
+  async save(): Promise<void> {
+    const preview = this.activePreview();
+    if (preview?.isActive) {
+      await preview.save();
+    } else {
+      await vscode.commands.executeCommand('workbench.action.files.save');
+    }
+  }
+
+  private onDocumentChanged(uri: vscode.Uri, immediate = false): void {
+    const key = uri.toString();
+    for (const preview of this.previews) {
+      if (preview.uri.toString() === key || preview.dependsOn(key)) {
+        preview.documentChanged(immediate);
+      } else if (uri.scheme === 'file' && immediate) {
+        // A saved file may be pulled in by other previews through !include or include::.
+        preview.scheduleUpdate(true);
+      }
+    }
+  }
+
+  private activePreview(): Preview | undefined {
+    for (const preview of this.previews) {
+      if (preview.isActive) {
+        return preview;
+      }
+    }
+    const editorUri = vscode.window.activeTextEditor?.document.uri.toString();
+    return [...this.previews].find((p) => p.uri.toString() === editorUri);
+  }
+}
+
+function documentLines(document: vscode.TextDocument): string[] {
+  return Array.from({ length: document.lineCount }, (_, i) => document.lineAt(i).text);
+}
+
+function basename(uri: vscode.Uri): string {
+  return uri.path.split('/').pop() ?? uri.path;
+}
+
+function createNonce(): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let nonce = '';
+  for (let i = 0; i < 32; i++) {
+    nonce += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return nonce;
+}

@@ -1,0 +1,6 @@
+' Colour scheme, included by styles.iuml.
+skinparam ArrowColor #2C6E9B
+skinparam ParticipantBorderColor #2C6E9B
+skinparam ActorBorderColor #2C6E9B
+skinparam DatabaseBorderColor #2C6E9B
+skinparam ClassBorderColor #2C6E9B

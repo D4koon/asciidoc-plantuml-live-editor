@@ -1,0 +1,37 @@
+= Ordering Service
+:toc:
+
+This document describes the ordering flow. See <<login-flow>> for authentication.
+
+NOTE: Diagrams are rendered locally by the PlantUML View extension.
+
+== Authentication
+
+[#login-flow]
+.Login flow
+[plantuml, target=login-flow, format=svg]
+----
+@startuml
+actor User
+participant "Web App" as App
+User -> App : login
+App --> User : session
+@enduml
+----
+
+== Domain model
+
+Diagrams may omit `@startuml` / `@enduml`:
+
+[plantuml]
+----
+class Order {
+  +id : UUID
+}
+class LineItem
+Order "1" *-- "many" LineItem : contains
+----
+
+A diagram can also come from a file:
+
+plantuml::sequence.puml[]

@@ -1,0 +1,177 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "AsciiDoc",
+  "scopeName": "text.asciidoc.plantumlview",
+  "patterns": [
+    { "include": "#commentBlock" },
+    { "include": "#lineComment" },
+    { "include": "#plantumlBlock" },
+    { "include": "#rawBlock" },
+    { "include": "#delimiter" },
+    { "include": "#heading" },
+    { "include": "#attributeEntry" },
+    { "include": "#blockAttributes" },
+    { "include": "#blockTitle" },
+    { "include": "#blockMacro" },
+    { "include": "#admonition" },
+    { "include": "#listMarker" },
+    { "include": "#table" },
+    { "include": "#inline" }
+  ],
+  "repository": {
+    "commentBlock": {
+      "name": "comment.block.asciidoc",
+      "begin": "^(/{4,})\\s*$",
+      "end": "^\\1\\s*$"
+    },
+    "lineComment": {
+      "name": "comment.line.double-slash.asciidoc",
+      "match": "^//(?!/{2,}\\s*$).*$"
+    },
+    "plantumlBlock": {
+      "comment": "[plantuml] (or [plantuml,...]) followed by a ---- or .... block: the content is PlantUML.",
+      "begin": "^(\\[)(plantuml)((?:[,#.%][^\\]]*)?)(\\])\\s*$",
+      "beginCaptures": {
+        "1": { "name": "punctuation.definition.attributes.begin.asciidoc" },
+        "2": { "name": "entity.name.function.asciidoc" },
+        "3": { "name": "entity.other.attribute-name.asciidoc" },
+        "4": { "name": "punctuation.definition.attributes.end.asciidoc" }
+      },
+      "end": "((?<=----|\\.\\.\\.\\.)$|^\\s*$)",
+      "patterns": [
+        { "include": "#blockTitle" },
+        {
+          "begin": "^(-{4,}|\\.{4,})\\s*$",
+          "beginCaptures": { "0": { "name": "punctuation.definition.block.asciidoc" } },
+          "end": "^\\1\\s*$",
+          "endCaptures": { "0": { "name": "punctuation.definition.block.asciidoc" } },
+          "contentName": "meta.embedded.block.plantuml",
+          "patterns": [{ "include": "source.plantuml" }]
+        }
+      ]
+    },
+    "rawBlock": {
+      "comment": "Listing (----), literal (....) and passthrough (++++) blocks: no AsciiDoc markup inside.",
+      "name": "markup.raw.block.asciidoc",
+      "begin": "^(-{4,}|\\.{4,}|\\+{4,})\\s*$",
+      "beginCaptures": { "0": { "name": "punctuation.definition.block.asciidoc" } },
+      "end": "^\\1\\s*$",
+      "endCaptures": { "0": { "name": "punctuation.definition.block.asciidoc" } }
+    },
+    "delimiter": {
+      "comment": "Example (====), sidebar (****), quote (____) and open (--) blocks hold normal content.",
+      "name": "punctuation.definition.block.asciidoc",
+      "match": "^(={4,}|\\*{4,}|_{4,}|--)\\s*$"
+    },
+    "heading": {
+      "match": "^(={1,6}|#{1,6})\\s+(\\S.*?)\\s*$",
+      "captures": {
+        "0": { "name": "markup.heading.asciidoc" },
+        "1": { "name": "punctuation.definition.heading.asciidoc" },
+        "2": { "name": "entity.name.section.asciidoc" }
+      }
+    },
+    "attributeEntry": {
+      "match": "^(:)(!?[\\w][\\w-]*!?)(:)(?:\\s+(.*))?$",
+      "captures": {
+        "1": { "name": "punctuation.separator.attribute-entry.asciidoc" },
+        "2": { "name": "support.constant.attribute-name.asciidoc" },
+        "3": { "name": "punctuation.separator.attribute-entry.asciidoc" },
+        "4": { "name": "string.unquoted.attribute-value.asciidoc", "patterns": [{ "include": "#attributeReference" }] }
+      }
+    },
+    "blockAttributes": {
+      "match": "^(\\[)(\\[?[^\\]]*\\]?)(\\])\\s*$",
+      "captures": {
+        "1": { "name": "punctuation.definition.attributes.begin.asciidoc" },
+        "2": { "name": "entity.other.attribute-name.asciidoc" },
+        "3": { "name": "punctuation.definition.attributes.end.asciidoc" }
+      }
+    },
+    "blockTitle": {
+      "match": "^(\\.)([^.\\s].*)$",
+      "captures": {
+        "1": { "name": "punctuation.definition.block-title.asciidoc" },
+        "2": { "name": "markup.heading.block-title.asciidoc", "patterns": [{ "include": "#inline" }] }
+      }
+    },
+    "blockMacro": {
+      "comment": "include::, image::, plantuml::, ifdef:: and other block macros on a line of their own.",
+      "match": "^([a-z][\\w-]*)(::)([^\\[\\s]*)(\\[)(.*)(\\])\\s*$",
+      "captures": {
+        "1": { "name": "keyword.control.macro.asciidoc" },
+        "2": { "name": "punctuation.separator.macro.asciidoc" },
+        "3": { "name": "markup.underline.link.asciidoc", "patterns": [{ "include": "#attributeReference" }] },
+        "4": { "name": "punctuation.definition.attributes.begin.asciidoc" },
+        "5": { "name": "entity.other.attribute-name.asciidoc" },
+        "6": { "name": "punctuation.definition.attributes.end.asciidoc" }
+      }
+    },
+    "admonition": {
+      "match": "^(NOTE|TIP|IMPORTANT|WARNING|CAUTION):(?=\\s)",
+      "name": "markup.bold.admonition.asciidoc"
+    },
+    "listMarker": {
+      "match": "^\\s*(\\*{1,5}|-|\\.{1,5}|\\d+\\.|[a-zA-Z]\\.|<\\d+>)(?=\\s)",
+      "captures": { "1": { "name": "punctuation.definition.list.begin.asciidoc" } }
+    },
+    "table": {
+      "patterns": [
+        { "name": "punctuation.definition.table.asciidoc", "match": "^[|,:!]===\\s*$" },
+        { "name": "punctuation.separator.table-cell.asciidoc", "match": "(?:^|(?<=\\s))(?:\\d+\\+|\\d*\\*|\\.\\d+)?[<^>]?[a-z]?\\|" }
+      ]
+    },
+    "attributeReference": {
+      "name": "variable.other.attribute-reference.asciidoc",
+      "match": "\\{[\\w][\\w-]*\\}"
+    },
+    "inline": {
+      "patterns": [
+        { "include": "#attributeReference" },
+        {
+          "name": "markup.inline.raw.asciidoc",
+          "match": "(?<![\\w`])`(?=\\S)[^`]*?(?<=\\S)`(?![\\w`])|``.+?``"
+        },
+        {
+          "name": "markup.other.passthrough.asciidoc",
+          "match": "\\+\\+\\+.+?\\+\\+\\+|pass:[a-z,]*\\[[^\\]]*\\]"
+        },
+        {
+          "name": "markup.bold.asciidoc",
+          "match": "\\*\\*.+?\\*\\*|(?<![\\w*])\\*(?=\\S)[^*]*?(?<=\\S)\\*(?![\\w*])"
+        },
+        {
+          "name": "markup.italic.asciidoc",
+          "match": "__.+?__|(?<![\\w_])_(?=\\S)[^_]*?(?<=\\S)_(?![\\w_])"
+        },
+        {
+          "name": "markup.underline.link.xref.asciidoc",
+          "match": "<<[^>\\n]+>>"
+        },
+        {
+          "name": "entity.name.tag.anchor.asciidoc",
+          "match": "\\[\\[[^\\]\\n]+\\]\\]"
+        },
+        {
+          "match": "\\b(https?|ftp|irc|mailto|link|xref|image|kbd|btn|menu|footnote|icon|stem|latexmath|asciimath)(:)([^\\s\\[]*)(\\[)([^\\]]*)(\\])",
+          "captures": {
+            "1": { "name": "keyword.control.macro.asciidoc" },
+            "2": { "name": "punctuation.separator.macro.asciidoc" },
+            "3": { "name": "markup.underline.link.asciidoc" },
+            "4": { "name": "punctuation.definition.attributes.begin.asciidoc" },
+            "5": { "name": "string.unquoted.link-text.asciidoc" },
+            "6": { "name": "punctuation.definition.attributes.end.asciidoc" }
+          }
+        },
+        {
+          "name": "markup.underline.link.asciidoc",
+          "match": "\\b(?:https?|ftp|irc)://[^\\s\\[<>]+"
+        },
+        {
+          "name": "constant.character.escape.line-break.asciidoc",
+          "match": "(?<=\\s)\\+$"
+        }
+      ]
+    }
+  }
+}

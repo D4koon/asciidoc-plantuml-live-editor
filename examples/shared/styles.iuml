@@ -1,0 +1,7 @@
+@startuml
+' Shared look for all examples. Pulls in colors.iuml, so anything that
+' includes this file gets a two-level include chain.
+!include colors.iuml
+skinparam classAttributeIconSize 0
+skinparam shadowing false
+@enduml

@@ -1,0 +1,17 @@
+=== Components
+
+This section is included by `02-architecture.adoc`, which `manual.adoc` includes.
+Its diagram's `!include` path is relative to *this* file.
+
+.Components
+[plantuml]
+----
+@startuml
+!include ../../../shared/styles.iuml
+component "Web App" as App
+component "Order Service" as Orders
+database "Order DB" as DB
+Ap --> Orders : RESTd
+Orders --> DB : SQL
+@enduml
+----

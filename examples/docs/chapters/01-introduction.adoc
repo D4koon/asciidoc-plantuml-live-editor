@@ -1,0 +1,8 @@
+== Introduction
+
+The shop sells things. This chapter is included from `manual.adoc`, and it
+includes a snippet of its own.
+
+include::snippets/tip.adoc[]
+
+The checkout is described in <<checkout-flow>>.

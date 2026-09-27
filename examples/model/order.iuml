@@ -1,0 +1,11 @@
+' Order aggregate. Uses Customer, so it includes customer.iuml first.
+!include_once customer.iuml
+class Order {
+  +id : UUID
+  +total() : Money
+}
+class LineItem {
+  +quantity : int
+}
+Order "1" *-- "many" LineItem : contains
+Customer "1" -- "*" Order : places

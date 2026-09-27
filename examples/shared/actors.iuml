@@ -1,0 +1,7 @@
+' Participants shared by several sequence diagrams.
+' Includes styles.iuml (which includes colors.iuml): a three-level chain.
+' !include_once means files that also include styles.iuml get one copy.
+!include_once styles.iuml
+actor User
+participant "Web App" as App
+database "Order DB" as DB
