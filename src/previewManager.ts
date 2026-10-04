@@ -3,7 +3,8 @@ import * as vscode from 'vscode';
 import { ElementRef, LineEdit, locateLine, planDelete, planRename, RenameRequest } from './diagramEdits';
 import { AsciiDocResult, isAsciiDoc, listAsciiDocIncludes, renderAsciiDoc } from './asciidoc';
 import { IncludeNode, resolveIncludes } from './includes';
-import { filePathOf, isReadOnly } from './versions';
+import { fileKey, filePathOf, isReadOnly, Version } from './versions';
+import { workspaceVersion } from './vscodeWorkspace';
 import { DiffMessage, DiffPairs, DiffScroll, DiffSide } from './diffs';
 
 interface PreviewState {
@@ -75,8 +76,8 @@ class Preview implements vscode.Disposable, DiffSide {
   // fragments (e.g. a file of skinparams), which are previewed through the root.
   private shown: vscode.Uri;
   private rendered: vscode.Uri;
-  /** Files the root or the rendered file includes (URIs); their changes re-render live. */
-  private dependencies = new Set<string>();
+  /** The files the last render read (the root's and the rendered file's includes); their changes re-render live. */
+  private version: Version | undefined;
   /** Set while the editor was switched by a click in the preview: the file the preview keeps showing. */
   private keptPreview: vscode.Uri | undefined;
   /** Files other than the root edited in this tab, to remind about unsaved changes. */
@@ -129,7 +130,7 @@ class Preview implements vscode.Disposable, DiffSide {
 
   /** The URIs of the files shown: the tab's own and every file it includes. */
   files(): string[] {
-    return [this.uri.toString(), this.rendered.toString(), ...this.dependencies];
+    return [this.uri.toString(), this.rendered.toString(), ...(this.version?.files().map(String) ?? [])];
   }
 
   /** Shows the changes of this side of a diff (or, without `side`, no longer). */
@@ -138,9 +139,9 @@ class Preview implements vscode.Disposable, DiffSide {
     if (this.ready && !this.disposed) void this.panel.webview.postMessage(message);
   }
 
-  /** Whether a change to `key` (a URI) affects this preview. */
-  dependsOn(key: string): boolean {
-    return key === this.shown.toString() || this.dependencies.has(key);
+  /** Whether a change to `uri` affects this preview. */
+  dependsOn(uri: vscode.Uri): boolean {
+    return fileKey(uri) === fileKey(this.uri) || fileKey(uri) === fileKey(this.shown) || !!this.version?.hasRead(uri);
   }
 
   scheduleUpdate(immediate = false): void {
@@ -175,32 +176,33 @@ class Preview implements vscode.Disposable, DiffSide {
     }
     const config = vscode.workspace.getConfiguration('asciidocPlantumlLive');
     const shown = this.shown;
-    const target = await this.renderTarget(shown);
+    const version = workspaceVersion();
+    const target = await this.renderTarget(shown, version);
     const format = isAsciiDoc(target) ? 'asciidoc' : 'plantuml';
-    const document = await vscode.workspace.openTextDocument(target);
+    const text = await version.text(target);
     let message: Record<string, unknown>;
     let includes: IncludeNode[];
     if (format === 'asciidoc') {
       let result: AsciiDocResult;
       try {
-        result = await renderAsciiDoc(document.getText(), target);
+        result = await renderAsciiDoc(text, target, version);
       } catch (e) {
         result = { html: `<div class="pv-adoc-error">AsciiDoc conversion failed: ${String(e)}</div>`, diagrams: [], blocks: [], includes: [] };
       }
       message = { ...result };
       includes = result.includes;
     } else {
-      let text = document.getText();
+      let rendered = text;
       let lineMap: number[] | undefined;
       // Resolved even when not inlined, for the split view's overview of includes.
-      const resolved = await resolveIncludes(text, target);
+      const resolved = await resolveIncludes(text, target, version);
       if (config.get<boolean>('resolveIncludes', true)) {
-        ({ text, lineMap } = resolved);
+        ({ text: rendered, lineMap } = resolved);
       }
       // lineMap maps rendered lines back to document lines; omitted when they are identical.
       // origins tells which file each line came from, for lines of included files.
       message = {
-        text,
+        text: rendered,
         lineMap: lineMap?.every((origin, i) => origin === i) ? undefined : lineMap,
         origins: lineMap && resolved.origins.files.length > 1 ? resolved.origins : undefined,
       };
@@ -208,19 +210,11 @@ class Preview implements vscode.Disposable, DiffSide {
     }
 
     // The overview always shows the root's includes.
-    const rootIncludes = target.toString() === this.uri.toString() ? includes : await this.listIncludes(this.uri);
-    const dependencies = new Set<string>();
-    const collect = (nodes: IncludeNode[]) =>
-      nodes.forEach((n) => {
-        if (n.uri && n.status === 'ok') dependencies.add(n.uri);
-        collect(n.children);
-      });
-    collect(rootIncludes);
-    collect(includes);
+    const rootIncludes = target.toString() === this.uri.toString() ? includes : await this.listIncludes(this.uri, version);
     if (this.disposed || shown !== this.shown) {
       return; // closed, or navigated elsewhere, while the files were loading
     }
-    this.dependencies = dependencies;
+    this.version = version;
     this.rendered = target;
     const dirty = vscode.workspace.textDocuments.filter((d) => d.isDirty).map((d) => d.uri.toString());
     void this.panel.webview.postMessage({
@@ -240,7 +234,7 @@ class Preview implements vscode.Disposable, DiffSide {
    * renders on its own (an AsciiDoc file, or PlantUML with `@start…`),
    * otherwise the root, which shows the fragment's effect.
    */
-  private async renderTarget(shown: vscode.Uri): Promise<vscode.Uri> {
+  private async renderTarget(shown: vscode.Uri, version: Version): Promise<vscode.Uri> {
     if (this.keptPreview) {
       return this.keptPreview;
     }
@@ -248,16 +242,15 @@ class Preview implements vscode.Disposable, DiffSide {
       return shown;
     }
     try {
-      const text = (await vscode.workspace.openTextDocument(shown)).getText();
-      return /^\s*@start\w+/m.test(text) ? shown : this.uri;
+      return /^\s*@start\w+/m.test(await version.text(shown)) ? shown : this.uri;
     } catch {
       return this.uri;
     }
   }
 
-  private async listIncludes(uri: vscode.Uri): Promise<IncludeNode[]> {
-    const text = (await vscode.workspace.openTextDocument(uri)).getText();
-    return isAsciiDoc(uri) ? listAsciiDocIncludes(text, uri) : (await resolveIncludes(text, uri)).includes;
+  private async listIncludes(uri: vscode.Uri, version: Version): Promise<IncludeNode[]> {
+    const text = await version.text(uri);
+    return isAsciiDoc(uri) ? listAsciiDocIncludes(text, uri, version) : (await resolveIncludes(text, uri, version)).includes;
   }
 
   /**
@@ -850,9 +843,8 @@ export class PreviewManager
   }
 
   private onDocumentChanged(uri: vscode.Uri, immediate = false): void {
-    const key = uri.toString();
     for (const preview of this.previews) {
-      if (preview.uri.toString() === key || preview.dependsOn(key)) {
+      if (preview.dependsOn(uri)) {
         preview.documentChanged(immediate);
       } else if (uri.scheme === 'file' && immediate) {
         // A saved file may be pulled in by other previews through !include or include::.

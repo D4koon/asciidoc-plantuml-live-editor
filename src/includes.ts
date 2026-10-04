@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { readText, relativeUri } from './versions';
+import { fileKey, relativeUri, Version } from './versions';
 
 const MAX_DEPTH = 16;
 const INCLUDE_RE = /^(\s*)!include(_many|_once)?\s+(.+?)\s*$/;
@@ -10,9 +10,9 @@ const START_END_RE = /^\s*@(start|end)\w+/;
  * `!include` directives are inlined here before the text reaches the webview.
  * Standard-library (`<...>`) and URL includes are left for the engine.
  */
-export async function resolveIncludes(text: string, baseUri: vscode.Uri): Promise<ResolvedText> {
+export async function resolveIncludes(text: string, baseUri: vscode.Uri, version: Version): Promise<ResolvedText> {
   const includes: IncludeNode[] = [];
-  const lines = await expand(text, baseUri, new Set([baseUri.toString()]), new Set(), 0, includes);
+  const lines = await expand(text, baseUri, version, new Set([fileKey(baseUri)]), new Set(), 0, includes);
   const base = baseUri.toString();
   const files: string[] = [];
   const origins = lines.map((l): [number, number] => {
@@ -48,12 +48,6 @@ export interface LineOrigins {
   lines: [number, number][];
 }
 
-/** The text of a document open in VS Code, unsaved changes included; undefined if it isn't open. */
-export function openDocumentText(uri: vscode.Uri): string | undefined {
-  const key = uri.toString();
-  return vscode.workspace.textDocuments.find((d) => d.uri.toString() === key)?.getText();
-}
-
 /** An include directive, for the split view's overview of included files. */
 export interface IncludeNode {
   /** `!include` and its variants, AsciiDoc `include::`, or a `plantuml::` macro. */
@@ -84,6 +78,7 @@ interface Line {
 async function expand(
   text: string,
   fileUri: vscode.Uri,
+  version: Version,
   stack: Set<string>,
   includedOnce: Set<string>,
   depth: number,
@@ -113,8 +108,8 @@ async function expand(
     const selector = bang > 0 ? target.slice(bang + 1) : undefined;
 
     const includeUri = relativeUri(fileUri, path);
-    const key = includeUri.toString();
-    node.uri = key;
+    const key = fileKey(includeUri);
+    node.uri = includeUri.toString();
 
     if (variant === '_once' && includedOnce.has(key)) {
       node.status = 'once';
@@ -128,7 +123,7 @@ async function expand(
 
     let content: string;
     try {
-      content = await readText(includeUri);
+      content = await version.text(includeUri);
     } catch {
       // Leave the directive in place so the engine reports the missing file.
       node.status = 'missing';
@@ -139,9 +134,9 @@ async function expand(
 
     stack.add(key);
     const selected = selectDiagram(content, selector);
-    const expanded = await expand(selected.body, includeUri, stack, includedOnce, depth + 1, node.children);
+    const expanded = await expand(selected.body, includeUri, version, stack, includedOnce, depth + 1, node.children);
     node.children.forEach((child) => (child.line += selected.offset));
-    expanded.forEach((l) => l.file === key && (l.origin += selected.offset));
+    expanded.forEach((l) => l.file === node.uri && (l.origin += selected.offset));
     stack.delete(key);
     out.push(...expanded.filter((l) => !START_END_RE.test(l.text)));
   }

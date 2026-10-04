@@ -284,7 +284,9 @@
     "watch": "tsc -watch -p ./",
     "fetch-runtime": "node ./scripts/fetch-runtime.mjs",
     "package": "vsce package",
-    "copy-monaco": "node ./scripts/copy-monaco.mjs"
+    "copy-monaco": "node ./scripts/copy-monaco.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc -p ./ --noEmit && tsc -p ./test"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
@@ -292,7 +294,9 @@
     "@vscode/vsce": "^3.2.1",
     "fflate": "^0.8.2",
     "monaco-editor": "^0.52.2",
-    "typescript": "^5.4.0"
+    "typescript": "^5.4.0",
+    "vitest": "^4.1.12",
+    "vscode-uri": "^3.2.0"
   },
   "dependencies": {
     "@asciidoctor/core": "^4.1.1"

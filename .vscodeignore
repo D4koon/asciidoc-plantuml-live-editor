@@ -10,3 +10,10 @@ node_modules/**
 **/*.ts
 tsconfig.json
 .gitignore
+AGENTS.md
+CLAUDE.md
+GLOSSARY.md
+test/**
+vitest.config.mts
+docs/**
+.scratch/**

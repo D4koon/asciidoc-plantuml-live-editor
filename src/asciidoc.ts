@@ -1,8 +1,7 @@
-import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { IncludeNode, LineOrigins, openDocumentText, resolveIncludes } from './includes';
-import { filePathOf, readText, uriInVersion } from './versions';
+import { IncludeNode, LineOrigins, resolveIncludes } from './includes';
+import { fileKey, filePathOf, samePath, uriInVersion, Version } from './versions';
 
 // Asciidoctor.js 4 ships its own CommonJS build; its types target ESM resolution.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -121,17 +120,16 @@ interface RawDiagram {
  * `plantuml::file[]` macros become placeholders that the webview renders
  * with the PlantUML engine, like Asciidoctor Diagram would on the command line.
  */
-export async function renderAsciiDoc(text: string, uri: vscode.Uri): Promise<AsciiDocResult> {
+export async function renderAsciiDoc(text: string, uri: vscode.Uri, version: Version): Promise<AsciiDocResult> {
   const config = vscode.workspace.getConfiguration('asciidocPlantumlLive');
   const safeMode = config.get<string>('asciidoc.safeMode', 'safe');
   const docFile = filePathOf(uri);
   const docDir = docFile ? path.dirname(docFile) : vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  // A version from git (the old side of a diff) can't be edited, and its
-  // includes come from the same version: read up front, since Asciidoctor
-  // reads them synchronously.
-  const isVersion = uri.scheme !== 'file' && !!docFile;
-  const texts = new Map<string, string>();
-  const includes = await collectIncludes(text, uri, docDir, safeMode !== 'unsafe', texts);
+  // Asciidoctor reads synchronously, which a version from git (the old side
+  // of a diff) can't: collecting the includes reads them up front.
+  const includes = await collectIncludes(text, uri, docDir, safeMode !== 'unsafe', version);
+  /** The text of `file` in the document's version, or undefined. */
+  const readFile = (file: string) => version.textSync(uriInVersion(uri, file));
   const raw: RawDiagram[] = [];
   /** The placeholders standing in for diagrams; they are edited through the diagram instead. */
   const diagramBlocks = new Set<unknown>();
@@ -165,8 +163,8 @@ export async function renderAsciiDoc(text: string, uri: vscode.Uri): Promise<Asc
       let error: string | undefined;
       try {
         if (!file) throw new Error('no folder to resolve it against');
-        const content = isVersion ? texts.get(fileKey(file)) : (openDocumentText(vscode.Uri.file(file)) ?? fs.readFileSync(file, 'utf8'));
-        if (content === undefined) throw new Error('not found in this version');
+        const content = readFile(file);
+        if (content === undefined) throw new Error('not found');
         lines = content.split(/\r\n|\r|\n/);
       } catch (e) {
         error = `Cannot read plantuml::${target}[]: ${e instanceof Error ? e.message : e}`;
@@ -178,27 +176,25 @@ export async function renderAsciiDoc(text: string, uri: vscode.Uri): Promise<Asc
     });
   });
 
-  // Included files with unsaved changes are read from the editor, so the
-  // preview follows edits made in the split view before they are saved; a
-  // version's includes come from that version. Includes selecting lines or
-  // tags are left to Asciidoctor (saved text).
-  const unsavedInclude = (reader: PreprocessorReader | undefined, target: string) => {
+  // Included files open in an editor are read from it, so the preview follows
+  // edits made in the split view before they are saved, and a git version's
+  // includes come from that version. Other files Asciidoctor reads itself
+  // (the same text); so do includes selecting lines or tags (saved text).
+  const versionInclude = (reader: PreprocessorReader | undefined, target: string) => {
     const directive = Array.isArray(reader?._lines) ? String(reader._lines[reader._lines.length - 1]) : '';
     if (typeof reader?._dir !== 'string' || /\[.*\b(lines|tags?)\s*=/.test(directive)) return undefined;
     const file = path.resolve(reader._dir, target);
     if (safeMode !== 'unsafe' && docDir && !isWithin(file, docDir)) return undefined;
-    if (isVersion) {
-      const text = texts.get(fileKey(file));
-      return text === undefined ? undefined : { file: file.split(path.sep).join('/'), text };
-    }
-    const document = vscode.workspace.textDocuments.find((d) => d.isDirty && d.uri.scheme === 'file' && samePath(d.uri.fsPath, file));
-    return document && { file: file.split(path.sep).join('/'), text: document.getText() };
+    const fileUri = uriInVersion(uri, file);
+    if (fileUri.scheme === 'file' && !version.isOpen(fileUri)) return undefined;
+    const text = version.textSync(fileUri);
+    return text === undefined ? undefined : { file: file.split(path.sep).join('/'), text };
   };
   registry.includeProcessor(function () {
-    this.handles((doc, target) => !!unsavedInclude(doc.reader, target));
+    this.handles((doc, target) => !!versionInclude(doc.reader, target));
     this.process((_doc, reader, target, attrs) => {
-      const unsaved = unsavedInclude(reader, target);
-      if (unsaved) reader.pushInclude(unsaved.text, unsaved.file, target, 1, attrs);
+      const include = versionInclude(reader, target);
+      if (include) reader.pushInclude(include.text, include.file, target, 1, attrs);
     });
   });
 
@@ -216,8 +212,6 @@ export async function renderAsciiDoc(text: string, uri: vscode.Uri): Promise<Asc
     },
   });
   // A version's blocks can't be edited, but they still show which lines changed in a diff.
-  const readFile = (file: string) =>
-    isVersion ? texts.get(fileKey(file)) : (openDocumentText(vscode.Uri.file(file)) ?? fs.readFileSync(file, 'utf8'));
   const { blocks, titleBlock } = tagEditableBlocks(doc, text.split(/\r\n|\r|\n/), docFile, diagramBlocks, readFile, (file) =>
     uriInVersion(uri, file).toString()
   );
@@ -227,18 +221,18 @@ export async function renderAsciiDoc(text: string, uri: vscode.Uri): Promise<Asc
   const diagrams: AsciiDocDiagram[] = [];
   for (const diagram of raw) {
     diagrams.push(
-      diagram.error ? { source: '', lineMap: [], error: diagram.error } : await prepareDiagram(diagram, inlineIncludes)
+      diagram.error ? { source: '', lineMap: [], error: diagram.error } : await prepareDiagram(diagram, inlineIncludes, version)
     );
   }
   return { html, diagrams, blocks, titleBlock, includes };
 }
 
 /** The include tree of a document, without rendering it. */
-export function listAsciiDocIncludes(text: string, uri: vscode.Uri): Promise<IncludeNode[]> {
+export function listAsciiDocIncludes(text: string, uri: vscode.Uri, version: Version): Promise<IncludeNode[]> {
   const safeMode = vscode.workspace.getConfiguration('asciidocPlantumlLive').get<string>('asciidoc.safeMode', 'safe');
   const docFile = filePathOf(uri);
   const docDir = docFile ? path.dirname(docFile) : vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  return collectIncludes(text, uri, docDir, safeMode !== 'unsafe', new Map());
+  return collectIncludes(text, uri, docDir, safeMode !== 'unsafe', version);
 }
 
 const INCLUDE_DIRECTIVE = /^include::([^\[\s][^\[]*)\[.*\]\s*$/;
@@ -251,15 +245,15 @@ const COMMENT_BLOCK = /^\/{4,}\s*$/;
  * Lists what a document pulls in: include:: directives (followed into the
  * included files), plantuml:: macros, and the !includes of its diagrams.
  * Asciidoctor doesn't report includes, so the source is scanned the same
- * way it reads it; conditionals (ifdef::) are not evaluated. The text of
- * every file read is put in `texts` (by `fileKey`).
+ * way it reads it; conditionals (ifdef::) are not evaluated. Every file is
+ * read through `version`, so it can then be read synchronously.
  */
 async function collectIncludes(
   text: string,
   uri: vscode.Uri,
   docDir: string | undefined,
   jailed: boolean,
-  texts: Map<string, string>
+  version: Version
 ): Promise<IncludeNode[]> {
   const attributes = new Map([['docdir', docDir ?? '']]);
 
@@ -284,7 +278,7 @@ async function collectIncludes(
       if (DIAGRAM_BLOCK.test(line) && DELIMITER.test(lines[i + 1] ?? '')) {
         // A diagram's !includes resolve from the folder of the file it is written in.
         const close = closing(i + 1);
-        const { includes } = await resolveIncludes(lines.slice(i + 2, close).join('\n'), fileUri);
+        const { includes } = await resolveIncludes(lines.slice(i + 2, close).join('\n'), fileUri, version);
         includes.forEach((node) => (node.line += i + 2));
         nodes.push(...includes);
         i = close;
@@ -324,30 +318,29 @@ async function collectIncludes(
         node.status = 'blocked';
         continue;
       }
-      if (stack.has(node.uri) || stack.size > 16) {
+      if (stack.has(fileKey(fileUriOfTarget)) || stack.size > 16) {
         node.status = 'recursive';
         continue;
       }
       let content: string;
       try {
-        content = await readText(fileUriOfTarget);
+        content = await version.text(fileUriOfTarget);
       } catch {
         node.status = 'missing';
         continue;
       }
-      texts.set(fileKey(file), content);
       if (macro) {
-        node.children = (await resolveIncludes(content, fileUriOfTarget)).includes;
+        node.children = (await resolveIncludes(content, fileUriOfTarget, version)).includes;
       } else {
-        stack.add(node.uri);
+        stack.add(fileKey(fileUriOfTarget));
         node.children = await scan(content, fileUriOfTarget, stack);
-        stack.delete(node.uri);
+        stack.delete(fileKey(fileUriOfTarget));
       }
     }
     return nodes;
   };
 
-  return scan(text, uri, new Set([uri.toString()]));
+  return scan(text, uri, new Set([fileKey(uri)]));
 }
 
 const DELIMITER = /^(-{4,}|\.{4,})\s*$/;
@@ -504,11 +497,12 @@ function findInIncludes(
 /** Resolves includes and trims/wraps the text so it starts at `@start…`. */
 async function prepareDiagram(
   { lines, baseUri, firstLine, startLine }: RawDiagram,
-  inlineIncludes: boolean
+  inlineIncludes: boolean,
+  version: Version
 ): Promise<AsciiDocDiagram> {
   const base = baseUri.toString();
   const resolved = inlineIncludes
-    ? await resolveIncludes(lines.join('\n'), baseUri)
+    ? await resolveIncludes(lines.join('\n'), baseUri, version)
     : { text: lines.join('\n'), lineMap: lines.map((_, i) => i), origins: { files: [base], lines: lines.map((_, i): [number, number] => [0, i]) } };
   let source = resolved.text.split('\n');
   let lineMap = resolved.lineMap.map((i) => (i < 0 || firstLine === undefined ? -1 : firstLine + i));
@@ -559,16 +553,6 @@ function isInside(node: AsciidoctorNode, nodes: Set<unknown>): boolean {
     if (nodes.has(n)) return true;
   }
   return false;
-}
-
-function samePath(a: string, b: string): boolean {
-  return fileKey(a) === fileKey(b);
-}
-
-/** A file path normalized for comparison (Windows paths ignore case). */
-function fileKey(file: string): string {
-  const resolved = path.resolve(file);
-  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
 }
 
 function isWithin(file: string, dir: string): boolean {

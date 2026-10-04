@@ -1,6 +1,6 @@
-import * as path from 'path';
 import * as vscode from 'vscode';
-import { filePathOf, readText } from './versions';
+import { filePathOf, pathKey, Version } from './versions';
+import { workspaceVersion } from './vscodeWorkspace';
 
 /**
  * Showing what changed between the two sides of a diff. VS Code opens each
@@ -77,14 +77,14 @@ export class DiffPairs {
 
   /** Called for every new preview: pairs it with the other side of its diff, if it is one. */
   add(side: DiffSide, all: Iterable<DiffSide>): void {
-    const key = fileKey(side.uri);
+    const key = pathKeyOf(side.uri);
     if (!key || side.kind !== 'editor') return;
     const candidates = [...all].filter(
       (other) =>
         other !== side &&
         other.kind === 'editor' &&
         !this.pairs.has(other) &&
-        fileKey(other.uri) === key &&
+        pathKeyOf(other.uri) === key &&
         other.uri.toString() !== side.uri.toString() &&
         (isGit(side.uri) || isGit(other.uri)) &&
         Math.abs(side.created - other.created) < PAIRING_WINDOW_MS
@@ -134,17 +134,18 @@ class DiffPair {
     const byPath = (side: DiffSide) => {
       const files = new Map<string, string>();
       for (const uri of side.files()) {
-        const key = fileKey(vscode.Uri.parse(uri));
+        const key = pathKeyOf(vscode.Uri.parse(uri));
         if (key && !files.has(key)) files.set(key, uri);
       }
       return files;
     };
     const oldFiles = byPath(this.oldSide);
     const newFiles = byPath(this.newSide);
-    const read = async (uri: string | undefined) => {
+    const [oldVersion, newVersion] = [workspaceVersion(), workspaceVersion()];
+    const read = async (version: Version, uri: string | undefined) => {
       if (!uri) return [];
       try {
-        return splitLines(await readText(vscode.Uri.parse(uri)));
+        return splitLines(await version.text(vscode.Uri.parse(uri)));
       } catch {
         return []; // not in this version
       }
@@ -155,7 +156,7 @@ class DiffPair {
     for (const key of new Set([...oldFiles.keys(), ...newFiles.keys()])) {
       const oldUri = oldFiles.get(key);
       const newUri = newFiles.get(key);
-      const [oldLines, newLines] = await Promise.all([read(oldUri), read(newUri)]);
+      const [oldLines, newLines] = await Promise.all([read(oldVersion, oldUri), read(newVersion, newUri)]);
       const [oldChanges, newChanges] = diffLines(oldLines, newLines);
       if (oldUri) oldResult[oldUri] = oldChanges;
       if (newUri) newResult[newUri] = newChanges;
@@ -180,7 +181,7 @@ class DiffPair {
       other.postDiff(position);
       return;
     }
-    const key = fileKey(vscode.Uri.parse(position.uri));
+    const key = pathKeyOf(vscode.Uri.parse(position.uri));
     const alignment = key ? this.alignments.get(key) : undefined;
     const uri = toNew ? alignment?.newUri : alignment?.oldUri;
     if (!alignment || !uri) return; // a file only this side has
@@ -253,11 +254,10 @@ function isOlder(a: vscode.Uri, b: vscode.Uri): boolean {
   return rank(a) < rank(b);
 }
 
-function fileKey(uri: vscode.Uri): string | undefined {
+/** The file `uri` is a version of, for pairing it with its other version. */
+function pathKeyOf(uri: vscode.Uri): string | undefined {
   const file = filePathOf(uri);
-  if (!file) return undefined;
-  const resolved = path.resolve(file);
-  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+  return file === undefined ? undefined : pathKey(file);
 }
 
 function splitLines(text: string): string[] {
