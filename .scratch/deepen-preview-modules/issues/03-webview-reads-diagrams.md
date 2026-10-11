@@ -15,3 +15,8 @@ This is the "contract" half: delete the webview's own diagram splitting, its doc
 - [ ] The old line-map and origin fields are no longer sent
 - [ ] Lines the engine added are treated the same way everywhere (the two different fillers are gone)
 - [ ] Checked by hand in the preview: jump-to-source in a plain diagram, in an included file, and in an AsciiDoc diagram; clicking an added line does nothing; the diff view highlights changes in included files on the right lines; rename and delete from the preview still work
+
+## Notes from ticket 02
+
+- The Diagrams arrive as `diagramList`; rename it to `diagrams` when the old AsciiDoc `diagrams` field is removed.
+- `block` differs from what the webview computes today: for text without markers it is the whole document (`start: 0`), where the webview used `start: -1`; for an unterminated diagram its end is the document's last line, where the webview used one past it. Adjust the consumers, not the Diagram.

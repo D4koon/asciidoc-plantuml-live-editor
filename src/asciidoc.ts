@@ -1,5 +1,6 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { Diagram, fromAsciiDoc } from './diagrams';
 import { IncludeNode, LineOrigins, resolveIncludes } from './includes';
 import { fileKey, filePathOf, samePath, uriInVersion, Version } from './versions';
 
@@ -94,9 +95,21 @@ export interface AsciiDocBlock {
   uri?: string;
 }
 
+/** The settings AsciiDoc rendering depends on (read from the configuration by the caller). */
+export interface AsciiDocSettings {
+  /** Asciidoctor's safe mode. */
+  safeMode: 'unsafe' | 'safe' | 'server' | 'secure';
+  /** Whether diagrams' `!include`s are inlined before they reach the engine. */
+  inlineIncludes: boolean;
+  /** The folder to resolve paths against when the document has none (e.g. untitled). */
+  defaultDir?: string;
+}
+
 export interface AsciiDocResult {
   html: string;
   diagrams: AsciiDocDiagram[];
+  /** The same diagrams as Diagrams (in the same order). */
+  diagramList: Diagram[];
   blocks: AsciiDocBlock[];
   /** Index into `blocks` of the document title (the `<h1>`), if editable. */
   titleBlock?: number;
@@ -120,11 +133,14 @@ interface RawDiagram {
  * `plantuml::file[]` macros become placeholders that the webview renders
  * with the PlantUML engine, like Asciidoctor Diagram would on the command line.
  */
-export async function renderAsciiDoc(text: string, uri: vscode.Uri, version: Version): Promise<AsciiDocResult> {
-  const config = vscode.workspace.getConfiguration('asciidocPlantumlLive');
-  const safeMode = config.get<string>('asciidoc.safeMode', 'safe');
+export async function renderAsciiDoc(
+  text: string,
+  uri: vscode.Uri,
+  version: Version,
+  { safeMode, inlineIncludes, defaultDir }: AsciiDocSettings
+): Promise<AsciiDocResult> {
   const docFile = filePathOf(uri);
-  const docDir = docFile ? path.dirname(docFile) : vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const docDir = docFile ? path.dirname(docFile) : defaultDir;
   // Asciidoctor reads synchronously, which a version from git (the old side
   // of a diff) can't: collecting the includes reads them up front.
   const includes = await collectIncludes(text, uri, docDir, safeMode !== 'unsafe', version);
@@ -217,21 +233,24 @@ export async function renderAsciiDoc(text: string, uri: vscode.Uri, version: Ver
   );
   const html = await doc.convert();
 
-  const inlineIncludes = config.get<boolean>('resolveIncludes', true);
   const diagrams: AsciiDocDiagram[] = [];
   for (const diagram of raw) {
     diagrams.push(
       diagram.error ? { source: '', lineMap: [], error: diagram.error } : await prepareDiagram(diagram, inlineIncludes, version)
     );
   }
-  return { html, diagrams, blocks, titleBlock, includes };
+  return { html, diagrams, diagramList: diagrams.map(fromAsciiDoc), blocks, titleBlock, includes };
 }
 
 /** The include tree of a document, without rendering it. */
-export function listAsciiDocIncludes(text: string, uri: vscode.Uri, version: Version): Promise<IncludeNode[]> {
-  const safeMode = vscode.workspace.getConfiguration('asciidocPlantumlLive').get<string>('asciidoc.safeMode', 'safe');
+export function listAsciiDocIncludes(
+  text: string,
+  uri: vscode.Uri,
+  version: Version,
+  { safeMode, defaultDir }: AsciiDocSettings
+): Promise<IncludeNode[]> {
   const docFile = filePathOf(uri);
-  const docDir = docFile ? path.dirname(docFile) : vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const docDir = docFile ? path.dirname(docFile) : defaultDir;
   return collectIncludes(text, uri, docDir, safeMode !== 'unsafe', version);
 }
 

@@ -1,7 +1,8 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { ElementRef, LineEdit, locateLine, planDelete, planRename, RenameRequest } from './diagramEdits';
-import { AsciiDocResult, isAsciiDoc, listAsciiDocIncludes, renderAsciiDoc } from './asciidoc';
+import { AsciiDocResult, AsciiDocSettings, isAsciiDoc, listAsciiDocIncludes, renderAsciiDoc } from './asciidoc';
+import { plantumlDiagrams } from './diagrams';
 import { IncludeNode, resolveIncludes } from './includes';
 import { fileKey, filePathOf, isReadOnly, Version } from './versions';
 import { workspaceVersion } from './vscodeWorkspace';
@@ -185,26 +186,29 @@ class Preview implements vscode.Disposable, DiffSide {
     if (format === 'asciidoc') {
       let result: AsciiDocResult;
       try {
-        result = await renderAsciiDoc(text, target, version);
+        result = await renderAsciiDoc(text, target, version, asciiDocSettings());
       } catch (e) {
-        result = { html: `<div class="pv-adoc-error">AsciiDoc conversion failed: ${String(e)}</div>`, diagrams: [], blocks: [], includes: [] };
+        result = {
+          html: `<div class="pv-adoc-error">AsciiDoc conversion failed: ${String(e)}</div>`,
+          diagrams: [],
+          diagramList: [],
+          blocks: [],
+          includes: [],
+        };
       }
       message = { ...result };
       includes = result.includes;
     } else {
-      let rendered = text;
-      let lineMap: number[] | undefined;
-      // Resolved even when not inlined, for the split view's overview of includes.
-      const resolved = await resolveIncludes(text, target, version);
-      if (config.get<boolean>('resolveIncludes', true)) {
-        ({ text: rendered, lineMap } = resolved);
-      }
+      const inlineIncludes = config.get<boolean>('resolveIncludes', true);
+      const { diagrams, resolved } = await plantumlDiagrams(text, target, version, inlineIncludes);
+      const lineMap = inlineIncludes ? resolved.lineMap : undefined;
       // lineMap maps rendered lines back to document lines; omitted when they are identical.
       // origins tells which file each line came from, for lines of included files.
       message = {
-        text: rendered,
+        text: inlineIncludes ? resolved.text : text,
         lineMap: lineMap?.every((origin, i) => origin === i) ? undefined : lineMap,
         origins: lineMap && resolved.origins.files.length > 1 ? resolved.origins : undefined,
+        diagramList: diagrams,
       };
       includes = resolved.includes;
     }
@@ -250,7 +254,9 @@ class Preview implements vscode.Disposable, DiffSide {
 
   private async listIncludes(uri: vscode.Uri, version: Version): Promise<IncludeNode[]> {
     const text = await version.text(uri);
-    return isAsciiDoc(uri) ? listAsciiDocIncludes(text, uri, version) : (await resolveIncludes(text, uri, version)).includes;
+    return isAsciiDoc(uri)
+      ? listAsciiDocIncludes(text, uri, version, asciiDocSettings())
+      : (await resolveIncludes(text, uri, version)).includes;
   }
 
   /**
@@ -862,6 +868,16 @@ export class PreviewManager
     const editorUri = vscode.window.activeTextEditor?.document.uri.toString();
     return [...this.previews].find((p) => p.uri.toString() === editorUri);
   }
+}
+
+/** The AsciiDoc settings from the configuration. */
+function asciiDocSettings(): AsciiDocSettings {
+  const config = vscode.workspace.getConfiguration('asciidocPlantumlLive');
+  return {
+    safeMode: config.get<AsciiDocSettings['safeMode']>('asciidoc.safeMode', 'safe'),
+    inlineIncludes: config.get<boolean>('resolveIncludes', true),
+    defaultDir: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+  };
 }
 
 function documentLines(document: vscode.TextDocument): string[] {

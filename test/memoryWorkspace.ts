@@ -1,3 +1,4 @@
+import * as path from 'path';
 import * as vscode from 'vscode';
 import { fileKey, Workspace } from '../src/versions';
 
@@ -37,13 +38,18 @@ export class MemoryWorkspace implements Workspace {
   }
 }
 
-/** A file on disk. */
+/** A file on disk; the path is made absolute the way the platform does (a drive on Windows). */
 export function disk(file: string): vscode.Uri {
-  return vscode.Uri.file(file);
+  return vscode.Uri.file(path.resolve(file));
+}
+
+/** The Origin of `line` of `uri`, as Diagrams report it. */
+export function origin(uri: vscode.Uri, line: number): { uri: string; line: number } {
+  return { uri: uri.toString(), line };
 }
 
 /** `file` at a git ref, as VS Code's git extension names it. */
 export function git(file: string, ref: string): vscode.Uri {
-  const uri = vscode.Uri.file(file);
+  const uri = disk(file);
   return uri.with({ scheme: 'git', query: JSON.stringify({ path: uri.fsPath, ref }) });
 }

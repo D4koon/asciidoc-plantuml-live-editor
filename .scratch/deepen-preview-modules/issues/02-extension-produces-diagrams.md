@@ -10,9 +10,15 @@ This is the "expand" half: the old fields are still sent, so the webview keeps w
 
 **Blocked by:** 01 (Version module).
 
-- [ ] Every update carries the Diagrams of the rendered document, for both PlantUML and AsciiDoc
-- [ ] Every line of every Diagram has an Origin or explicitly has none; nothing is left out
-- [ ] Lines the engine added have their real text and no Origin
-- [ ] Diagram building reads through the Version, so its reads are recorded
-- [ ] Tests through an in-memory Version cover: a plain PlantUML file; a PlantUML file with nested includes; an AsciiDoc document with listing blocks and `plantuml::` macros; added `@startuml`/`@enduml` lines; `!include_many` of the same file
+- [x] Every update carries the Diagrams of the rendered document, for both PlantUML and AsciiDoc
+- [x] Every line of every Diagram has an Origin or explicitly has none; nothing is left out
+- [x] Lines the engine added have their real text and no Origin
+- [x] Diagram building reads through the Version, so its reads are recorded
+- [x] Tests through an in-memory Version cover: a plain PlantUML file; a PlantUML file with nested includes; an AsciiDoc document with listing blocks and `plantuml::` macros; added `@startuml`/`@enduml` lines; `!include_many` of the same file
 - [ ] The webview still works on the old fields (checked by hand)
+
+## Notes
+
+- The Diagrams travel in a new update field, `diagramList` (in `AsciiDocResult` too), since AsciiDoc updates already use `diagrams` for the old shape the webview reads. Ticket 03 renames it once the old field is gone.
+- AsciiDoc rendering now takes its settings (`safeMode`, `inlineIncludes`, `defaultDir`) as a parameter, so it can be tested outside VS Code: an early slice of ticket 06.
+- Inside the extension, include resolution still reports the old shapes (`lineMap`, file-index origins), converted to Origins at the end; they go once nothing sends them.
