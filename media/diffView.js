@@ -7,8 +7,8 @@
 /**
  * @typedef {{ changed: number[], ends: number[], gaps: number[], touched?: number[] }} FileChanges
  * @typedef {{ side: 'old' | 'new', files: Record<string, FileChanges> }} Diff
- * @typedef {{ at: [string, number] | null, text: string }} DiagramLine
- *   A line of a diagram's source as the engine saw it, with the file (URI) and line it came from.
+ * @typedef {{ origin: import('../src/diagrams').Origin | null, text: string }} DiagramLine
+ *   A line of a diagram's source as the engine saw it, with its Origin.
  * @typedef {{ box: HTMLElement, mark: HTMLElement, uri: string, start: number, end: number, has: (uri: string, line: number) => boolean, diagram?: HTMLElement }} Region
  *   Something rendered from the lines `start`..`end` of `uri`: a diagram or a block.
  *   `mark` gets the change highlight, `box` the markers for removed or added lines.
@@ -241,10 +241,10 @@ export function setupDiffView({ container, nav, post, diagramLines, blocks }) {
  * @returns {Region | undefined}
  */
 function diagramRegion(diagram, lines) {
-  const home = lines.find((l) => l.at)?.at?.[0];
+  const home = lines.find((l) => l.origin)?.origin?.uri;
   if (!home) return undefined;
-  const own = lines.flatMap((l) => (l.at && l.at[0] === home ? [l.at[1]] : []));
-  const set = new Set(lines.flatMap((l) => (l.at ? [`${l.at[0]}\u0000${l.at[1]}`] : [])));
+  const own = lines.flatMap((l) => (l.origin && l.origin.uri === home ? [l.origin.line] : []));
+  const set = new Set(lines.flatMap((l) => (l.origin ? [`${l.origin.uri}\u0000${l.origin.line}`] : [])));
   const box = /** @type {HTMLElement} */ (diagram.closest('.pv-adoc-diagram-block') ?? diagram);
   return {
     box,
@@ -267,14 +267,15 @@ function diagramRegion(diagram, lines) {
  * @param {(uri: string, line: number) => boolean} shown
  */
 function markDiagram(diagram, lines, isChanged, gaps, shown) {
-  const changedAt = lines.map((l) => !!l.at && isChanged(l.at[0], l.at[1]));
+  const changedAt = lines.map((l) => !!l.origin && isChanged(l.origin.uri, l.origin.line));
   let any = changedAt.some(Boolean);
   // Lines removed or added on the other side, between two lines of this diagram.
   lines.forEach((l, i) => {
-    const prev = lines[i - 1]?.at;
-    if (l.at && prev && prev[0] === l.at[0] && prev[1] === l.at[1] - 1 && gaps.get(l.at[0])?.has(l.at[1])) any = true;
+    const prev = lines[i - 1]?.origin;
+    const origin = l.origin;
+    if (origin && prev && prev.uri === origin.uri && prev.line === origin.line - 1 && gaps.get(origin.uri)?.has(origin.line)) any = true;
   });
-  lines.forEach((l, i) => changedAt[i] && l.at && shown(l.at[0], l.at[1]));
+  lines.forEach((l, i) => changedAt[i] && l.origin && shown(l.origin.uri, l.origin.line));
   const svg = diagram.querySelector('svg');
   if (!svg || !any) return any;
 
@@ -288,7 +289,8 @@ function markDiagram(diagram, lines, isChanged, gaps, shown) {
   }
   // Lines without an element of their own (class members, note text, …):
   // texts that appear in a changed line and in no unchanged one.
-  const unchanged = lines.filter((_, i) => !changedAt[i]).map((l) => l.text);
+  // Lines the engine was given without them being written anywhere count as neither.
+  const unchanged = lines.filter((l, i) => l.origin && !changedAt[i]).map((l) => l.text);
   const open = lines.filter((_, i) => changedAt[i] && !matched.has(i)).map((l) => l.text);
   if (open.length) {
     for (const text of svg.querySelectorAll('text')) {

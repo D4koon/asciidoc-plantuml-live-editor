@@ -63,7 +63,7 @@ export function isAsciiDoc(uri: vscode.Uri): boolean {
 }
 
 /** A PlantUML diagram found in an AsciiDoc document. */
-export interface AsciiDocDiagram {
+interface AsciiDocDiagram {
   /** Diagram text for the engine, starting at its `@start…` line. */
   source: string;
   /** For each line of `source`, its line in the document, or -1. */
@@ -107,9 +107,8 @@ export interface AsciiDocSettings {
 
 export interface AsciiDocResult {
   html: string;
-  diagrams: AsciiDocDiagram[];
-  /** The same diagrams as Diagrams (in the same order). */
-  diagramList: Diagram[];
+  /** The document's diagrams, in the order of their placeholders (`data-diagram`). */
+  diagrams: Diagram[];
   blocks: AsciiDocBlock[];
   /** Index into `blocks` of the document title (the `<h1>`), if editable. */
   titleBlock?: number;
@@ -233,13 +232,13 @@ export async function renderAsciiDoc(
   );
   const html = await doc.convert();
 
-  const diagrams: AsciiDocDiagram[] = [];
+  const prepared: AsciiDocDiagram[] = [];
   for (const diagram of raw) {
-    diagrams.push(
+    prepared.push(
       diagram.error ? { source: '', lineMap: [], error: diagram.error } : await prepareDiagram(diagram, inlineIncludes, version)
     );
   }
-  return { html, diagrams, diagramList: diagrams.map(fromAsciiDoc), blocks, titleBlock, includes };
+  return { html, diagrams: prepared.map(fromAsciiDoc), blocks, titleBlock, includes };
 }
 
 /** The include tree of a document, without rendering it. */

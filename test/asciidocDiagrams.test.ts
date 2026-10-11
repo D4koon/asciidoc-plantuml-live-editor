@@ -32,9 +32,9 @@ describe('Diagrams of an AsciiDoc document', () => {
     ].join('\n');
     const version = new Version(workspace);
 
-    const { diagramList } = await renderAsciiDoc(text, DOC, version, SETTINGS);
+    const { diagrams } = await renderAsciiDoc(text, DOC, version, SETTINGS);
 
-    expect(diagramList).toEqual([
+    expect(diagrams).toEqual([
       {
         lines: ['@startuml', 'A -> B', '@enduml'],
         origins: [null, at(DOC, 4), null],
@@ -57,9 +57,9 @@ describe('Diagrams of an AsciiDoc document', () => {
   it('closes a block without @end… with a line without an Origin', async () => {
     const text = ['[plantuml]', '----', '@startuml', 'A -> B', '----'].join('\n');
 
-    const { diagramList } = await renderAsciiDoc(text, DOC, new Version(new MemoryWorkspace()), SETTINGS);
+    const { diagrams } = await renderAsciiDoc(text, DOC, new Version(new MemoryWorkspace()), SETTINGS);
 
-    expect(diagramList).toEqual([
+    expect(diagrams).toEqual([
       {
         lines: ['@startuml', 'A -> B', '@enduml'],
         origins: [at(DOC, 2), at(DOC, 3), null],
@@ -69,8 +69,8 @@ describe('Diagrams of an AsciiDoc document', () => {
   });
 
   it('keeps a diagram that could not be loaded, with its error', async () => {
-    const { diagramList } = await renderAsciiDoc('plantuml::missing.puml[]', DOC, new Version(new MemoryWorkspace()), SETTINGS);
+    const { diagrams } = await renderAsciiDoc('plantuml::missing.puml[]', DOC, new Version(new MemoryWorkspace()), SETTINGS);
 
-    expect(diagramList).toEqual([{ lines: [], origins: [], error: expect.stringContaining('missing.puml') }]);
+    expect(diagrams).toEqual([{ lines: [], origins: [], error: expect.stringContaining('missing.puml') }]);
   });
 });

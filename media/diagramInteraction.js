@@ -20,9 +20,9 @@ const CONNECTION_CLASSES = ['message', 'link'];
  *   editable: boolean,
  *   onBackgroundDblClick: () => void,
  * }} options
- * @typedef {{ lines: string[], origins: ([string, number] | null)[] }} Expanded
+ * @typedef {{ lines: string[], origins: (import('../src/diagrams').Origin | null)[] }} Expanded
  *   A diagram that includes other files, as the engine sees it, with each
- *   line's file and line (null for lines added along the way). Renames and
+ *   line's Origin (null for lines added along the way). Renames and
  *   deletes are planned on it and applied to every file involved.
  */
 export function setupDiagramInteraction({ container, post, locate, elsewhere, expand, editable, onBackgroundDblClick }) {

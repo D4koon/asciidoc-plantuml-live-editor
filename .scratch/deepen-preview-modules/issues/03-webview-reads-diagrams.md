@@ -10,13 +10,19 @@ This is the "contract" half: delete the webview's own diagram splitting, its doc
 
 **Blocked by:** 02 (Extension produces Diagrams).
 
-- [ ] The webview no longer splits diagrams out of the document text
-- [ ] The functions that rebuilt lines and origins in the webview are deleted; every consumer reads the Diagram
-- [ ] The old line-map and origin fields are no longer sent
-- [ ] Lines the engine added are treated the same way everywhere (the two different fillers are gone)
+- [x] The webview no longer splits diagrams out of the document text
+- [x] The functions that rebuilt lines and origins in the webview are deleted; every consumer reads the Diagram
+- [x] The old line-map and origin fields are no longer sent
+- [x] Lines the engine added are treated the same way everywhere (the two different fillers are gone)
 - [ ] Checked by hand in the preview: jump-to-source in a plain diagram, in an included file, and in an AsciiDoc diagram; clicking an added line does nothing; the diff view highlights changes in included files on the right lines; rename and delete from the preview still work
 
 ## Notes from ticket 02
 
 - The Diagrams arrive as `diagramList`; rename it to `diagrams` when the old AsciiDoc `diagrams` field is removed.
-- `block` differs from what the webview computes today: for text without markers it is the whole document (`start: 0`), where the webview used `start: -1`; for an unterminated diagram its end is the document's last line, where the webview used one past it. Adjust the consumers, not the Diagram.
+- `block` differed from what the webview computed: for text without markers it was the whole document (`start: 0`), where the webview used `start: -1`; for an unterminated diagram its end was the document's last line, where the webview used one past it.
+
+## Notes
+
+- Resolved the other way round: the Diagram's `block` now encloses the written lines (-1 and the document's length when the markers were added), because the edit planner treats block bounds as exclusive, as the webview did; AsciiDoc delimiters already fit.
+- The webview's remaining helpers (`locateInDocument`, `originElsewhere`, `expandedDiagram`, `diagramLines`) only look things up in the element's Diagram.
+- `ExpandedDiagram` (the edit messages) and `DiagramLine` (the diff view) keep names the glossary avoids; ticket 05 renames them with the protocol.

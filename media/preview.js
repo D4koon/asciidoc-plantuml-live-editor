@@ -28,9 +28,11 @@ function saveState(patch) {
 }
 
 /**
- * The latest content from the extension: a PlantUML file (`text`) or a
- * converted AsciiDoc document (`html` + `diagrams`).
- * @type {{ format: string, text?: string, theme: string, lineMap?: number[], origins?: LineOrigins, nav?: { rendered: string }, html?: string, diagrams?: any[], blocks?: import('./documentEditing.js').SourceBlock[], titleBlock?: number } | undefined}
+ * The latest content from the extension: the Diagrams of a PlantUML file,
+ * or a converted AsciiDoc document (`html`) and its Diagrams.
+ * @typedef {import('../src/diagrams').Diagram} Diagram
+ * @typedef {import('../src/diagrams').Origin} Origin
+ * @type {{ format: string, theme: string, nav?: { rendered: string }, diagrams: Diagram[], html?: string, blocks?: import('./documentEditing.js').SourceBlock[], titleBlock?: number } | undefined}
  */
 let latest;
 let generation = 0;
@@ -69,63 +71,35 @@ function renderOne(source, dark) {
 
 // --------------------------------------------------------------- render ---
 
-/**
- * Splits a document into its individual diagram sources. `start`/`end` are the
- * lines of the @start/@end markers in `text` (`-1`/`lines.length` when synthesized).
- */
-function splitDiagrams(text) {
-  /** @type {{ source: string, start: number, end: number }[]} */
-  const blocks = [];
-  const lines = text.split(/\r\n|\r|\n/);
-  let start = -1;
-  let kind = '';
-  lines.forEach((line, i) => {
-    const s = /^\s*@start(\w+)/.exec(line);
-    if (s && start < 0) {
-      start = i;
-      kind = s[1];
-      return;
-    }
-    const e = /^\s*@end(\w+)/.exec(line);
-    if (e && start >= 0 && e[1] === kind) {
-      blocks.push({ source: lines.slice(start, i + 1).join('\n'), start, end: i });
-      start = -1;
-    }
-  });
-  if (start >= 0) {
-    // Unterminated block: close it so the user still sees something while typing.
-    blocks.push({ source: [...lines.slice(start), `@end${kind}`].join('\n'), start, end: lines.length });
-  }
-  if (blocks.length === 0 && text.trim().length > 0) {
-    blocks.push({ source: `@startuml\n${text}\n@enduml`, start: -1, end: lines.length });
-  }
-  return blocks;
+/** The Diagram each rendered diagram element shows. @type {WeakMap<HTMLElement, Diagram>} */
+const diagramOf = new WeakMap();
+
+/** The Origin of a diagram's line (an SVG data-source-line counts from its first line). */
+function originOf(/** @type {HTMLElement} */ el, /** @type {number | undefined} */ sourceLine) {
+  return sourceLine === undefined ? undefined : (diagramOf.get(el)?.origins[sourceLine] ?? undefined);
+}
+
+/** Whether `origin` is a line of the file the preview renders (not of a file it includes). */
+function inRenderedFile(/** @type {Origin} */ origin) {
+  return origin.uri === latest?.nav?.rendered;
+}
+
+/** A diagram element to render: shows `diagram`. */
+function target(/** @type {HTMLElement} */ el, /** @type {Diagram} */ diagram) {
+  diagramOf.set(el, diagram);
+  return { el, source: diagram.lines.join('\n'), error: diagram.error };
 }
 
 /**
- * Converts a diagram's block and an SVG data-source-line (relative to the
- * block's @start line) into document lines, undoing !include expansion.
+ * Where a diagram is written in the document, and the document line of a
+ * line of it; undefined when the diagram isn't in the document itself.
  */
 function locateInDocument(/** @type {HTMLElement} */ el, /** @type {number | undefined} */ sourceLine) {
-  const embedded = documentDiagrams.get(el);
-  if (embedded) {
-    // AsciiDoc: the extension sent the mapping; no block means read-only (included file).
-    if (!embedded.block) return undefined;
-    const line = sourceLine === undefined ? -1 : embedded.lineMap[sourceLine] ?? -1;
-    return { block: embedded.block, hint: line >= 0 ? line : undefined };
-  }
-  const map =(/** @type {number} */ i) => (latest?.lineMap ? latest.lineMap[i] ?? -1 : i);
-  const start = Number(el.dataset.start);
-  const end = Number(el.dataset.end);
-  const block = {
-    start: start < 0 ? -1 : map(start),
-    end: latest?.lineMap && end >= latest.lineMap.length ? Number.MAX_SAFE_INTEGER : map(end),
-  };
-  const hintLine = sourceLine === undefined ? -1 : map(start + sourceLine);
-  return { block, hint: hintLine >= 0 ? hintLine : undefined };
+  const block = diagramOf.get(el)?.block;
+  if (!block) return undefined;
+  const origin = originOf(el, sourceLine);
+  return { block, hint: origin && inRenderedFile(origin) ? origin.line : undefined };
 }
-
-/** @typedef {{ files: string[], lines: [number, number][] }} LineOrigins */
 
 /**
  * Where a diagram element was written, when that is another file than the
@@ -133,56 +107,26 @@ function locateInDocument(/** @type {HTMLElement} */ el, /** @type {number | und
  * are looked up by their texts.
  */
 function originElsewhere(/** @type {HTMLElement} */ el, /** @type {number | undefined} */ sourceLine, /** @type {string[]} */ texts) {
-  const embedded = documentDiagrams.get(el);
-  const origins = embedded ? embedded.origins : latest?.origins;
-  if (!origins || !latest?.nav) return undefined;
-  const lines = (embedded ? embedded.source : latest.text ?? '').split(/\r\n|\r|\n/);
-  // PlantUML files: the diagram is a slice of the text starting at its @start line (-1 when synthesized).
-  const offset = embedded ? 0 : Number(el.dataset.start);
-  const last = embedded ? lines.length - 1 : Math.min(Number(el.dataset.end), lines.length - 1);
-  let index = sourceLine === undefined ? -1 : offset + sourceLine;
-  if (sourceLine === undefined) {
+  const diagram = diagramOf.get(el);
+  if (!diagram) return undefined;
+  let line = sourceLine;
+  if (line === undefined) {
     const wanted = texts.filter((t) => t.trim());
-    for (let i = Math.max(0, offset); i <= last && index < 0; i++) {
-      if (wanted.some((t) => lines[i].includes(t))) index = i;
-    }
+    const found = diagram.lines.findIndex((l) => wanted.some((t) => l.includes(t)));
+    line = found < 0 ? undefined : found;
   }
-  const [file, line] = origins.lines[index] ?? [-1, -1];
-  const uri = origins.files[file];
-  return file >= 0 && uri !== latest.nav.rendered ? { uri, line } : undefined;
+  const origin = originOf(el, line);
+  return origin && !inRenderedFile(origin) ? origin : undefined;
 }
 
 /**
- * A diagram's text as rendered, with each line's file and line, when it
- * includes other files than the previewed one; undefined otherwise (it is
- * then edited through the document, as before).
+ * A diagram that includes other files than the previewed one, for editing
+ * across them; undefined otherwise (it is then edited through the document).
  */
 function expandedDiagram(/** @type {HTMLElement} */ el) {
-  const embedded = documentDiagrams.get(el);
-  const origins = embedded ? embedded.origins : latest?.origins;
-  if (!origins || !latest?.nav) return undefined;
-  /** @type {string[]} */
-  let lines;
-  /** @type {[number, number][]} */
-  let at;
-  if (embedded) {
-    lines = embedded.source.split(/\r\n|\r|\n/);
-    at = origins.lines;
-  } else {
-    // PlantUML files: the diagram's lines of the text, from its @start to its @end (synthesized ones included).
-    const all = (latest.text ?? '').split(/\r\n|\r|\n/);
-    lines = [];
-    at = [];
-    for (let i = Number(el.dataset.start); i <= Number(el.dataset.end); i++) {
-      const real = i >= 0 && i < all.length;
-      lines.push(real ? all[i] : i < 0 ? '@startuml' : '@enduml');
-      at.push(real ? origins.lines[i] : [-1, -1]);
-    }
-  }
-  const rendered = latest.nav.rendered;
-  /** @type {([string, number] | null)[]} */
-  const located = at.map(([file, line]) => (file >= 0 ? [origins.files[file], line] : null));
-  return located.some((o) => o && o[0] !== rendered) ? { lines, origins: located } : undefined;
+  const diagram = diagramOf.get(el);
+  if (!diagram || !diagram.origins.some((o) => o && !inRenderedFile(o))) return undefined;
+  return { lines: diagram.lines, origins: diagram.origins };
 }
 
 function isDark(theme) {
@@ -261,25 +205,22 @@ async function renderAll() {
   setStatus(failures ? `${failures} diagram(s) failed to render` : '', failures > 0);
 }
 
-/** PlantUML files: one container per @start…/@end… block. */
+/** PlantUML files: one container per Diagram. */
 function diagramTargets() {
   if (!latest) return [];
-  const blocks = splitDiagrams(latest.text ?? '');
+  const diagrams = latest.diagrams;
   // Reuse existing containers so unchanged diagrams don't flicker.
-  while (diagramsEl.children.length > blocks.length) {
+  while (diagramsEl.children.length > diagrams.length) {
     diagramsEl.lastElementChild?.remove();
   }
-  while (diagramsEl.children.length < blocks.length) {
+  while (diagramsEl.children.length < diagrams.length) {
     const el = document.createElement('div');
     el.className = 'diagram';
     diagramsEl.appendChild(el);
   }
-  return blocks.map((block, i) => {
-    const el = /** @type {HTMLElement} */ (diagramsEl.children[i]);
+  return diagrams.map((diagram, i) => {
     // Kept current even when the diagram itself is unchanged (lines above may have moved).
-    el.dataset.start = String(block.start);
-    el.dataset.end = String(block.end);
-    return { el, source: block.source };
+    return target(/** @type {HTMLElement} */ (diagramsEl.children[i]), diagram);
   });
 }
 
@@ -290,16 +231,10 @@ let renderedFormat = document.body.dataset.format;
 let isDocument = renderedFormat === 'asciidoc';
 /** @type {string | undefined} */
 let renderedHtml;
-/**
- * Per-placeholder diagram info from the extension (line map, block range).
- * @type {WeakMap<HTMLElement, { source: string, lineMap: number[], origins?: LineOrigins, block?: { start: number, end: number }, error?: string }>}
- */
-const documentDiagrams = new WeakMap();
-
 /** Editable blocks of the document currently shown (they belong to `renderedHtml`). */
 /** @type {import('./documentEditing.js').SourceBlock[]} */
 let renderedBlocks = [];
-/** @type {any[]} */
+/** @type {Diagram[]} */
 let renderedDiagrams = [];
 
 /** AsciiDoc: inserts the converted document and returns its diagram placeholders. */
@@ -310,7 +245,7 @@ function documentTargets() {
     // Diagrams and blocks are referenced by index, so with the same HTML only their
     // data changes (e.g. an edited !include file changes a diagram, not the HTML).
     renderedBlocks = latest.blocks ?? [];
-    renderedDiagrams = latest.diagrams ?? [];
+    renderedDiagrams = latest.diagrams;
     if (latest.html !== renderedHtml) {
       renderedHtml = latest.html;
       const scrollTop = diagramsEl.scrollTop;
@@ -322,9 +257,7 @@ function documentTargets() {
   const diagrams = renderedDiagrams;
   return [...diagramsEl.querySelectorAll('.pv-adoc-diagram')].map((node) => {
     const el = /** @type {HTMLElement} */ (node);
-    const info = diagrams[Number(el.dataset.diagram)] ?? { source: '', lineMap: [], error: 'Diagram not found' };
-    documentDiagrams.set(el, info);
-    return { el, source: info.source, error: info.error };
+    return target(el, diagrams[Number(el.dataset.diagram)] ?? { lines: [], origins: [], error: 'Diagram not found' });
   });
 }
 
@@ -340,37 +273,12 @@ const documentEditing = setupDocumentEditing({
 
 /**
  * Each line of a diagram as the engine saw it (index = the SVG's
- * data-source-line), with the file and line it came from.
+ * data-source-line), with its Origin.
  * @returns {import('./diffView.js').DiagramLine[]}
  */
 function diagramLines(/** @type {HTMLElement} */ el) {
-  const embedded = documentDiagrams.get(el);
-  if (embedded) {
-    const origins = embedded.origins;
-    return embedded.source.split(/\r\n|\r|\n/).map((text, i) => {
-      const [file, line] = origins?.lines[i] ?? [-1, -1];
-      return { text, at: origins && file >= 0 ? [origins.files[file], line] : null };
-    });
-  }
-  if (!latest?.nav || el.dataset.start === undefined) return [];
-  const all = (latest.text ?? '').split(/\r\n|\r|\n/);
-  const rendered = latest.nav.rendered;
-  /** @type {import('./diffView.js').DiagramLine[]} */
-  const lines = [];
-  for (let i = Number(el.dataset.start); i <= Number(el.dataset.end); i++) {
-    const real = i >= 0 && i < all.length;
-    /** @type {[string, number] | null} */
-    let at = null;
-    if (real && latest.origins) {
-      const [file, line] = latest.origins.lines[i] ?? [-1, -1];
-      if (file >= 0) at = [latest.origins.files[file], line];
-    } else if (real) {
-      const line = latest.lineMap ? latest.lineMap[i] ?? -1 : i;
-      if (line >= 0) at = [rendered, line];
-    }
-    lines.push({ text: real ? all[i] : '', at });
-  }
-  return lines;
+  const diagram = diagramOf.get(el);
+  return diagram ? diagram.lines.map((text, i) => ({ text, origin: diagram.origins[i] })) : [];
 }
 
 const diffView = setupDiffView({
@@ -556,13 +464,10 @@ window.addEventListener('message', (event) => {
     case 'update':
       latest = {
         format: message.format ?? renderedFormat,
-        text: message.text,
         theme: message.theme,
-        lineMap: message.lineMap,
-        origins: message.origins,
         nav: message.nav,
         html: message.html,
-        diagrams: message.diagrams,
+        diagrams: message.diagrams ?? [],
         blocks: message.blocks,
         titleBlock: message.titleBlock,
       };

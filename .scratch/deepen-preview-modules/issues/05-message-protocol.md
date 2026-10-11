@@ -14,3 +14,7 @@ Spec: `.scratch/deepen-preview-modules/spec.md` (Protocol module)
 - [ ] The webview scripts type-check against the protocol; their hand-kept copy of the update fields is deleted
 - [ ] Changing a message's shape causes a type error on both sides (checked once by hand)
 - [ ] Preview and diff view behave as before (checked by hand)
+
+## Notes from ticket 03
+
+- Rename the message types the glossary avoids: `ExpandedDiagram` (sent with select/rename/delete) and the diff view's `DiagramLine`; both are a Diagram's lines with their Origins.

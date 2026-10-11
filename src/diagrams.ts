@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { LineOrigins, resolveIncludes, ResolvedText } from './includes';
+import { IncludeNode, LineOrigins, resolveIncludes } from './includes';
 import { Version } from './versions';
 
 /** The file (a URI) and zero-based line, within a Version, that a line of a Diagram came from. */
@@ -15,9 +15,10 @@ export interface Diagram {
   /** For each line, its Origin; null for a line the engine was given without it being written anywhere. */
   origins: (Origin | null)[];
   /**
-   * The document lines the diagram is written in (its `@start…`/`@end…` lines,
-   * or an AsciiDoc block's delimiters); absent when it isn't written in the
-   * document itself (e.g. it comes from an included file).
+   * The document lines enclosing the lines the diagram is written in: its
+   * `@start…`/`@end…` lines, or an AsciiDoc block's delimiters; -1 and the
+   * document's length when the markers were added. Absent when it isn't
+   * written in the document itself (e.g. it comes from an included file).
    */
   block?: { start: number; end: number };
   /** Set when the diagram could not be loaded (e.g. a missing `plantuml::` file). */
@@ -26,21 +27,21 @@ export interface Diagram {
 
 /**
  * The Diagrams of a PlantUML file, cut out of its text with includes
- * expanded (unless `inlineIncludes` is off), and how its includes resolved.
+ * expanded (unless `inlineIncludes` is off), and its include directives.
  */
 export async function plantumlDiagrams(
   text: string,
   uri: vscode.Uri,
   version: Version,
   inlineIncludes = true
-): Promise<{ diagrams: Diagram[]; resolved: ResolvedText }> {
+): Promise<{ diagrams: Diagram[]; includes: IncludeNode[] }> {
   // Resolved even when not inlined, for the split view's overview of includes.
   const resolved = await resolveIncludes(text, uri, version);
   const document = uri.toString();
   const documentLines = text.split(/\r\n|\r|\n/);
   const lines = inlineIncludes ? resolved.text.split('\n') : documentLines;
   const origins = inlineIncludes ? originsOf(resolved.origins) : documentLines.map((_, line) => ({ uri: document, line }));
-  return { diagrams: cut(lines, origins, document, documentLines.length), resolved };
+  return { diagrams: cut(lines, origins, document, documentLines.length), includes: resolved.includes };
 }
 
 /** The Diagram of a diagram found in an AsciiDoc document (as `renderAsciiDoc` prepares it for the engine). */
@@ -77,7 +78,7 @@ function cut(lines: string[], origins: (Origin | null)[], document: string, docu
   /** Lines `from`..`to`, closed with `closingMarker` (an added line) when the text lacks one. */
   const diagram = (from: number, to: number, closingMarker?: string): Diagram => {
     const start = documentLine(from);
-    const last = closingMarker === undefined ? documentLine(to) : documentLength - 1;
+    const last = closingMarker === undefined ? documentLine(to) : documentLength;
     return {
       lines: [...lines.slice(from, to + 1), ...(closingMarker === undefined ? [] : [closingMarker])],
       origins: [...origins.slice(from, to + 1), ...(closingMarker === undefined ? [] : [null])],
@@ -107,7 +108,7 @@ function cut(lines: string[], origins: (Origin | null)[], document: string, docu
     diagrams.push({
       lines: ['@startuml', ...lines, '@enduml'],
       origins: [null, ...origins, null],
-      block: { start: 0, end: documentLength - 1 },
+      block: { start: -1, end: documentLength },
     });
   }
   return diagrams;

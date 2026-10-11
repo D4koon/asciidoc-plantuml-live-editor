@@ -2,7 +2,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { ElementRef, LineEdit, locateLine, planDelete, planRename, RenameRequest } from './diagramEdits';
 import { AsciiDocResult, AsciiDocSettings, isAsciiDoc, listAsciiDocIncludes, renderAsciiDoc } from './asciidoc';
-import { plantumlDiagrams } from './diagrams';
+import { Origin, plantumlDiagrams } from './diagrams';
 import { IncludeNode, resolveIncludes } from './includes';
 import { fileKey, filePathOf, isReadOnly, Version } from './versions';
 import { workspaceVersion } from './vscodeWorkspace';
@@ -41,7 +41,7 @@ type WebviewMessage =
  */
 interface ExpandedDiagram {
   lines: string[];
-  origins: ([string, number] | null)[];
+  origins: (Origin | null)[];
 }
 
 const SPLIT_STATE_KEY = 'asciidocPlantumlLive.split';
@@ -191,7 +191,6 @@ class Preview implements vscode.Disposable, DiffSide {
         result = {
           html: `<div class="pv-adoc-error">AsciiDoc conversion failed: ${String(e)}</div>`,
           diagrams: [],
-          diagramList: [],
           blocks: [],
           includes: [],
         };
@@ -200,17 +199,9 @@ class Preview implements vscode.Disposable, DiffSide {
       includes = result.includes;
     } else {
       const inlineIncludes = config.get<boolean>('resolveIncludes', true);
-      const { diagrams, resolved } = await plantumlDiagrams(text, target, version, inlineIncludes);
-      const lineMap = inlineIncludes ? resolved.lineMap : undefined;
-      // lineMap maps rendered lines back to document lines; omitted when they are identical.
-      // origins tells which file each line came from, for lines of included files.
-      message = {
-        text: inlineIncludes ? resolved.text : text,
-        lineMap: lineMap?.every((origin, i) => origin === i) ? undefined : lineMap,
-        origins: lineMap && resolved.origins.files.length > 1 ? resolved.origins : undefined,
-        diagramList: diagrams,
-      };
-      includes = resolved.includes;
+      const result = await plantumlDiagrams(text, target, version, inlineIncludes);
+      message = { diagrams: result.diagrams };
+      includes = result.includes;
     }
 
     // The overview always shows the root's includes.
@@ -558,7 +549,7 @@ class Preview implements vscode.Disposable, DiffSide {
     const line = locateLine(expanded.lines, ref);
     const origin = line === undefined ? undefined : expanded.origins[line];
     if (origin) {
-      await this.revealSource(origin[1], vscode.Uri.parse(origin[0]));
+      await this.revealSource(origin.line, vscode.Uri.parse(origin.uri));
     }
   }
 
@@ -584,7 +575,7 @@ class Preview implements vscode.Disposable, DiffSide {
     const files = new Set<string>();
     const done = new Set<string>();
     for (const { line, text } of edits) {
-      const [file, fileLine] = expanded.origins[line]!;
+      const { uri: file, line: fileLine } = expanded.origins[line]!;
       if (done.has(`${file}:${fileLine}`)) {
         continue; // a file included twice (!include_many): its line is edited once
       }

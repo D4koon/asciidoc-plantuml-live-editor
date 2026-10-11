@@ -17,3 +17,7 @@ The rendering tests from ticket 02 move up to the renderer and are extended to c
 - [ ] SVG export uses the renderer, so the export matches the preview
 - [ ] Rendering tests run against the renderer and check the full typed update and its dependencies; the ticket-02 tests they replace are deleted
 - [ ] Preview, AsciiDoc preview, diff view and SVG export behave as before (checked by hand)
+
+## Notes from ticket 03
+
+- AsciiDoc rendering still prepares diagrams in an older private shape (with a line map) and converts them to Diagrams at the end; have it produce Diagrams directly.

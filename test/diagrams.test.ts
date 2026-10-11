@@ -53,7 +53,7 @@ describe('Diagrams of a PlantUML file', () => {
       {
         lines: ['@startuml', 'A -> B', 'B -> C', '@enduml'],
         origins: [null, at(MAIN, 0), at(MAIN, 1), null],
-        block: { start: 0, end: 1 },
+        block: { start: -1, end: 2 },
       },
     ]);
   });
@@ -67,7 +67,7 @@ describe('Diagrams of a PlantUML file', () => {
       {
         lines: ['@startuml', 'A -> B', '', '', '@enduml'],
         origins: [at(MAIN, 0), at(MAIN, 1), at(MAIN, 2), at(MAIN, 3), null],
-        block: { start: 0, end: 3 },
+        block: { start: 0, end: 4 },
       },
     ]);
   });
@@ -87,10 +87,10 @@ describe('Diagrams of a PlantUML file', () => {
     const workspace = new MemoryWorkspace().file(disk('/project/part.iuml'), 'A -> B');
     const text = ['@startuml', '!include part.iuml', '@enduml'].join('\n');
 
-    const { diagrams, resolved } = await plantumlDiagrams(text, MAIN, new Version(workspace), false);
+    const { diagrams, includes } = await plantumlDiagrams(text, MAIN, new Version(workspace), false);
 
     expect(diagrams[0].lines).toEqual(['@startuml', '!include part.iuml', '@enduml']);
     expect(diagrams[0].origins).toEqual([at(MAIN, 0), at(MAIN, 1), at(MAIN, 2)]);
-    expect(resolved.includes.map((i) => i.status)).toEqual(['ok']);
+    expect(includes.map((i) => i.status)).toEqual(['ok']);
   });
 });
