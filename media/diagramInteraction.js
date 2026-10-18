@@ -1,31 +1,28 @@
 // @ts-check
 // Click / double-click / Delete on the rendered diagram. Works out what was
 // hit (element kind, its texts, the source-line hint from the SVG) and sends
-// it to the extension, which maps it onto the document.
+// it with the diagram's lines to the extension, which maps it onto the files
+// those lines came from.
 
 const CONNECTION_CLASSES = ['message', 'link'];
 
 /**
- * @typedef {{ start: number, end: number }} Block
- * @typedef {{ block: Block, hint?: number, qualifiedName?: string, texts: string[] }} ElementRef
+ * @typedef {{ hint?: number, qualifiedName?: string, texts: string[] }} ElementRef
  */
 
 /**
  * @param {{
  *   container: HTMLElement,
  *   post: (message: object) => void,
- *   locate: (diagramEl: HTMLElement, sourceLine: number | undefined) => { block: Block, hint?: number } | undefined,
- *   elsewhere: (diagramEl: HTMLElement, sourceLine: number | undefined, texts: string[]) => { uri: string, line: number } | undefined,
- *   expand: (diagramEl: HTMLElement) => Expanded | undefined,
+ *   diagram: (diagramEl: HTMLElement) => Diagram | undefined,
  *   editable: boolean,
  *   onBackgroundDblClick: () => void,
  * }} options
- * @typedef {{ lines: string[], origins: (import('../src/diagrams').Origin | null)[] }} Expanded
- *   A diagram that includes other files, as the engine sees it, with each
- *   line's Origin (null for lines added along the way). Renames and
- *   deletes are planned on it and applied to every file involved.
+ * @typedef {import('../src/diagrams').Diagram} Diagram
+ *   Elements are located on a Diagram's lines (the SVG's data-source-line is
+ *   an index into them).
  */
-export function setupDiagramInteraction({ container, post, locate, elsewhere, expand, editable, onBackgroundDblClick }) {
+export function setupDiagramInteraction({ container, post, diagram, editable, onBackgroundDblClick }) {
   /** @type {Element | undefined} */
   let selected;
   container.tabIndex = 0;
@@ -39,20 +36,13 @@ export function setupDiagramInteraction({ container, post, locate, elsewhere, ex
   container.addEventListener('click', (e) => {
     const hit = hitTest(/** @type {Element} */ (e.target));
     container.focus({ preventScroll: true });
-    const source = hit && sourceElsewhere(hit);
-    if (hit && source) {
-      // Defined in an included file: show that file's line in the source.
-      select(hit.group ?? hit.text);
-      post({ type: 'revealLine', ...source });
-      return;
-    }
-    const ref = hit && refFor(hit);
-    if (!hit || !ref) {
+    const target = hit && refFor(hit);
+    if (!hit || !target) {
       select(undefined);
       return;
     }
     select(hit.group ?? hit.text);
-    post({ type: 'select', ref, expanded: expand(hit.diagram) });
+    post({ type: 'select', ...target });
   });
 
   container.addEventListener('dblclick', (e) => {
@@ -61,15 +51,15 @@ export function setupDiagramInteraction({ container, post, locate, elsewhere, ex
       if (!hit) onBackgroundDblClick();
       return;
     }
-    const ref = editable ? refFor(hit) : undefined;
-    if (!ref) return; // read-only diagram
+    const target = editable ? refFor(hit) : undefined;
+    if (!target) return; // read-only diagram
     e.preventDefault();
     const text = hit.text;
     editInline(text, (newText) => {
       post({
         type: 'rename',
-        request: { ...ref, kind: textKind(hit.group, text), oldText: text.textContent ?? '', newText },
-        expanded: expand(hit.diagram),
+        request: { ...target.ref, kind: textKind(hit.group, text), oldText: text.textContent ?? '', newText },
+        diagram: target.diagram,
       });
     });
   });
@@ -81,39 +71,23 @@ export function setupDiagramInteraction({ container, post, locate, elsewhere, ex
     } else if (editable && (e.key === 'Delete' || e.key === 'Backspace') && selected && isConnection(selected)) {
       e.preventDefault();
       const hit = hitTest(selected);
-      const ref = hit && refFor(hit);
-      if (ref) post({ type: 'delete', ref, expanded: expand(hit.diagram) });
+      const target = hit && refFor(hit);
+      if (target) post({ type: 'delete', ...target });
       select(undefined);
     }
   });
 
   /**
-   * The file and line of a hit element when it comes from another file than
-   * the previewed one (an included file), else undefined.
    * @param {{ diagram: HTMLElement, group?: Element, text?: Element }} hit
-   */
-  function sourceElsewhere(hit) {
-    const line = hit.group?.getAttribute('data-source-line');
-    const texts = hit.group ? contentTexts(hit.group).map((t) => t.textContent ?? '') : [hit.text?.textContent ?? ''];
-    return elsewhere(hit.diagram, line == null ? undefined : Number(line), texts);
-  }
-
-  /**
-   * @param {{ diagram: HTMLElement, group?: Element, text?: Element }} hit
-   * @returns {ElementRef | undefined} undefined when the diagram can't be edited
+   * @returns {{ ref: ElementRef, diagram: Diagram } | undefined} undefined when the diagram is unknown
    */
   function refFor(hit) {
+    const source = diagram(hit.diagram);
+    if (!source) return undefined;
     const line = hit.group?.getAttribute('data-source-line');
-    const sourceLine = line == null ? undefined : Number(line);
-    // A diagram with included files is edited on its expanded text, where the source line is the index.
-    const expanded = expand(hit.diagram);
-    const located = expanded ? { block: { start: 0, end: expanded.lines.length - 1 }, hint: sourceLine } : locate(hit.diagram, sourceLine);
-    if (!located) return undefined;
-    const { block, hint } = located;
     /** @type {ElementRef} */
     const ref = {
-      block,
-      hint,
+      hint: line == null ? undefined : Number(line),
       qualifiedName: hit.group?.getAttribute('data-qualified-name') ?? undefined,
       texts: hit.group ? contentTexts(hit.group).map((t) => t.textContent ?? '') : [hit.text?.textContent ?? ''],
     };
@@ -122,7 +96,7 @@ export function setupDiagramInteraction({ container, post, locate, elsewhere, ex
       const title = hit.group.querySelector('title')?.textContent;
       if (title) ref.texts = [title];
     }
-    return ref;
+    return { ref, diagram: source };
   }
 }
 

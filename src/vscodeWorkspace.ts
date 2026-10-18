@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as vscode from 'vscode';
+import { FileEdit } from './sourceEdits';
 import { fileKey, Version, Workspace } from './versions';
 
 /** The real workspace: VS Code's open documents and file systems. */
@@ -16,6 +17,15 @@ export const vscodeWorkspace: Workspace = {
     return fs.readFileSync(uri.fsPath, 'utf8');
   },
 };
+
+/** Applies text edits to the workspace's documents (they then have unsaved changes). */
+export async function applyFileEdits(edits: FileEdit[]): Promise<boolean> {
+  const workspaceEdit = new vscode.WorkspaceEdit();
+  for (const { uri, start, end, text } of edits) {
+    workspaceEdit.replace(vscode.Uri.parse(uri), new vscode.Range(start.line, start.character, end.line, end.character), text);
+  }
+  return vscode.workspace.applyEdit(workspaceEdit);
+}
 
 /** A Version for one render, reading the real workspace. */
 export function workspaceVersion(): Version {

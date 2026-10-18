@@ -2,10 +2,11 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { ElementRef, LineEdit, locateLine, planDelete, planRename, RenameRequest } from './diagramEdits';
 import { AsciiDocResult, AsciiDocSettings, isAsciiDoc, listAsciiDocIncludes, renderAsciiDoc } from './asciidoc';
-import { Origin, plantumlDiagrams } from './diagrams';
+import { Diagram, plantumlDiagrams } from './diagrams';
+import { BlockEdit, editBlock, editDiagram, Outcome } from './sourceEdits';
 import { IncludeNode, resolveIncludes } from './includes';
 import { fileKey, filePathOf, isReadOnly, Version } from './versions';
-import { workspaceVersion } from './vscodeWorkspace';
+import { applyFileEdits, workspaceVersion } from './vscodeWorkspace';
 import { DiffMessage, DiffPairs, DiffScroll, DiffSide } from './diffs';
 
 interface PreviewState {
@@ -26,23 +27,15 @@ type WebviewMessage =
   | { type: 'openSource' }
   | { type: 'edit'; uri: string; version: number; changes: SourceChange[]; text: string }
   | { type: 'split'; split: boolean }
-  | { type: 'select'; ref: ElementRef; expanded?: ExpandedDiagram }
-  | { type: 'rename'; request: RenameRequest; expanded?: ExpandedDiagram }
-  | { type: 'delete'; ref: ElementRef; expanded?: ExpandedDiagram }
+  | { type: 'select'; ref: ElementRef; diagram: Diagram }
+  | { type: 'rename'; request: RenameRequest; diagram: Diagram }
+  | { type: 'delete'; ref: ElementRef; diagram: Diagram }
   | { type: 'revealLine'; line: number; uri?: string }
-  | { type: 'editBlock'; start: number; end: number; oldText: string; newText: string; uri?: string }
+  | ({ type: 'editBlock'; uri?: string } & BlockEdit)
   | { type: 'openLink'; href: string }
   | { type: 'show'; uri: string; line?: number }
   | DiffScroll;
 
-/**
- * A diagram with includes as the engine saw it: its lines, and for each the
- * file (URI) and line it came from, or null for lines added along the way.
- */
-interface ExpandedDiagram {
-  lines: string[];
-  origins: (Origin | null)[];
-}
 
 const SPLIT_STATE_KEY = 'asciidocPlantumlLive.split';
 
@@ -381,24 +374,21 @@ class Preview implements vscode.Disposable, DiffSide {
         void this.globalState.update(SPLIT_STATE_KEY, message.split);
         break;
       case 'select':
-        void (message.expanded ? this.revealExpanded(message.expanded, message.ref) : this.revealElement(message.ref));
+        void this.revealElement(message.diagram, message.ref);
         break;
       case 'rename': {
-        const plan = (lines: string[]) => planRename(lines, message.request);
-        const what = `“${message.request.oldText}”`;
-        void (message.expanded ? this.editExpanded(message.expanded, plan, what) : this.editDiagram(plan, what));
+        const { diagram, request } = message;
+        void this.applyDiagramEdit(diagram, planRename(diagram.lines, request), `“${request.oldText}”`);
         break;
       }
-      case 'delete': {
-        const plan = (lines: string[]) => planDelete(lines, message.ref);
-        void (message.expanded ? this.editExpanded(message.expanded, plan, 'this connection') : this.editDiagram(plan, 'this connection'));
+      case 'delete':
+        void this.applyDiagramEdit(message.diagram, planDelete(message.diagram.lines, message.ref), 'this connection');
         break;
-      }
       case 'revealLine':
         void this.revealSource(message.line, message.uri ? vscode.Uri.parse(message.uri) : this.rendered);
         break;
       case 'editBlock':
-        void this.editBlock(message);
+        void this.applyBlockEdit(message);
         break;
       case 'openLink':
         void this.openLink(message.href);
@@ -423,13 +413,12 @@ class Preview implements vscode.Disposable, DiffSide {
     }
   }
 
-  /** Selects the source line of a clicked element in the split editor and any visible text editor. */
-  private async revealElement(ref: ElementRef): Promise<void> {
-    const uri = this.rendered;
-    const document = await vscode.workspace.openTextDocument(uri);
-    const line = locateLine(documentLines(document), ref);
-    if (line !== undefined) {
-      await this.revealSource(line, uri);
+  /** Selects the source line of a clicked element, in whichever file it was written. */
+  private async revealElement(diagram: Diagram, ref: ElementRef): Promise<void> {
+    const line = locateLine(diagram.lines, ref);
+    const origin = line === undefined ? undefined : diagram.origins[line];
+    if (origin) {
+      await this.revealSource(origin.line, vscode.Uri.parse(origin.uri));
     }
   }
 
@@ -486,29 +475,11 @@ class Preview implements vscode.Disposable, DiffSide {
    * text removes the block. Refused if the lines changed since the preview
    * was rendered, since the edit would then land in the wrong place.
    */
-  private async editBlock({ start, end, oldText, newText, uri: file }: Extract<WebviewMessage, { type: 'editBlock' }>): Promise<void> {
+  private async applyBlockEdit({ uri, ...block }: Extract<WebviewMessage, { type: 'editBlock' }>): Promise<void> {
     // Blocks of included files name their file.
-    const uri = file ? vscode.Uri.parse(file) : this.rendered;
-    const document = await vscode.workspace.openTextDocument(uri);
-    const current = end < document.lineCount ? documentLines(document).slice(start, end + 1).join('\n') : undefined;
-    if (current !== oldText) {
-      void vscode.window.showInformationMessage('AsciiDoc: the document changed while you were editing. Please try again.');
-      return;
-    }
-    const edit = new vscode.WorkspaceEdit();
-    const eol = document.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n';
-    const lines = new vscode.Range(start, 0, end, document.lineAt(end).text.length);
-    if (newText.trim()) {
-      edit.replace(uri, lines, newText.replace(/\r\n|\r|\n/g, eol));
-    } else if (end + 1 < document.lineCount) {
-      // Removing the block also takes the blank line that separated it from the next one.
-      const next = end + 1 < document.lineCount - 1 && !document.lineAt(end + 1).text.trim() ? end + 2 : end + 1;
-      edit.delete(uri, new vscode.Range(start, 0, next, 0));
-    } else {
-      edit.delete(uri, lines);
-    }
-    await vscode.workspace.applyEdit(edit);
-    this.noteEdited(uri);
+    const outcome = await editBlock(uri ?? this.rendered.toString(), block, workspaceVersion());
+    const changed = 'AsciiDoc: the document changed while you were editing. Please try again.';
+    await this.apply(outcome, { notFound: changed, changed: () => changed });
   }
 
   private noteEdited(uri: vscode.Uri): void {
@@ -517,86 +488,23 @@ class Preview implements vscode.Disposable, DiffSide {
     }
   }
 
-  /** Applies line edits computed from the document; `what` names the target in error messages. */
-  private async editDiagram(plan: (lines: string[]) => LineEdit[] | undefined, what: string): Promise<void> {
-    const uri = this.rendered;
-    const document = await vscode.workspace.openTextDocument(uri);
-    const edits = plan(documentLines(document));
-    if (!edits) {
-      void vscode.window.showInformationMessage(
-        `PlantUML: couldn't find ${what} in the source. Edit it in the text editor instead.`
-      );
-      return;
-    }
-    const edit = new vscode.WorkspaceEdit();
-    for (const { line, text } of edits) {
-      if (text !== undefined) {
-        edit.replace(uri, document.lineAt(line).range, text);
-      } else if (line + 1 < document.lineCount) {
-        edit.delete(uri, new vscode.Range(line, 0, line + 1, 0));
-      } else if (line > 0) {
-        edit.delete(uri, new vscode.Range(document.lineAt(line - 1).range.end, document.lineAt(line).range.end));
-      } else {
-        edit.delete(uri, document.lineAt(line).range);
-      }
-    }
-    await vscode.workspace.applyEdit(edit);
-    this.noteEdited(uri);
+  /** Applies a rename or delete planned on a diagram's lines; `what` names the target in messages. */
+  private async applyDiagramEdit(diagram: Diagram, plan: LineEdit[] | undefined, what: string): Promise<void> {
+    await this.apply(await editDiagram(diagram, plan, workspaceVersion()), {
+      notFound: `PlantUML: couldn't find ${what} in the source. Edit it in the text editor instead.`,
+      changed: (uri) => `PlantUML: ${basename(uri)} changed. Please try again.`,
+    });
   }
 
-  /** Selects the source line of an element clicked in a diagram with includes, in whichever file it is. */
-  private async revealExpanded(expanded: ExpandedDiagram, ref: ElementRef): Promise<void> {
-    const line = locateLine(expanded.lines, ref);
-    const origin = line === undefined ? undefined : expanded.origins[line];
-    if (origin) {
-      await this.revealSource(origin.line, vscode.Uri.parse(origin.uri));
-    }
-  }
-
-  /**
-   * Edits a diagram that includes other files: plans the edits on the text
-   * the engine saw and applies each changed line to the file it came from,
-   * so e.g. renaming a participant declared in an included file updates its
-   * uses everywhere in the diagram. Refused if any of those lines changed.
-   */
-  private async editExpanded(
-    expanded: ExpandedDiagram,
-    plan: (lines: string[]) => LineEdit[] | undefined,
-    what: string
-  ): Promise<void> {
-    const edits = plan(expanded.lines);
-    if (!edits || edits.some(({ line }) => !expanded.origins[line])) {
-      void vscode.window.showInformationMessage(
-        `PlantUML: couldn't find ${what} in the source. Edit it in the text editor instead.`
-      );
+  /** Applies the edits of `outcome`, or tells why there are none. */
+  private async apply(outcome: Outcome, messages: { notFound: string; changed: (uri: vscode.Uri) => string }): Promise<void> {
+    if (!outcome.ok) {
+      const message = outcome.reason === 'changed' ? messages.changed(vscode.Uri.parse(outcome.uri)) : messages.notFound;
+      void vscode.window.showInformationMessage(message);
       return;
     }
-    const workspaceEdit = new vscode.WorkspaceEdit();
-    const files = new Set<string>();
-    const done = new Set<string>();
-    for (const { line, text } of edits) {
-      const { uri: file, line: fileLine } = expanded.origins[line]!;
-      if (done.has(`${file}:${fileLine}`)) {
-        continue; // a file included twice (!include_many): its line is edited once
-      }
-      done.add(`${file}:${fileLine}`);
-      const uri = vscode.Uri.parse(file);
-      const document = await vscode.workspace.openTextDocument(uri);
-      if (fileLine >= document.lineCount || document.lineAt(fileLine).text !== expanded.lines[line]) {
-        void vscode.window.showInformationMessage(`PlantUML: ${basename(uri)} changed. Please try again.`);
-        return;
-      }
-      files.add(file);
-      if (text !== undefined) {
-        workspaceEdit.replace(uri, document.lineAt(fileLine).range, text);
-      } else if (fileLine + 1 < document.lineCount) {
-        workspaceEdit.delete(uri, new vscode.Range(fileLine, 0, fileLine + 1, 0));
-      } else {
-        workspaceEdit.delete(uri, document.lineAt(fileLine).rangeIncludingLineBreak);
-      }
-    }
-    await vscode.workspace.applyEdit(workspaceEdit);
-    files.forEach((file) => this.noteEdited(vscode.Uri.parse(file)));
+    await applyFileEdits(outcome.edits);
+    new Set(outcome.edits.map((e) => e.uri)).forEach((uri) => this.noteEdited(vscode.Uri.parse(uri)));
   }
 
   private updateFocusContext(): void {
@@ -869,10 +777,6 @@ function asciiDocSettings(): AsciiDocSettings {
     inlineIncludes: config.get<boolean>('resolveIncludes', true),
     defaultDir: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
   };
-}
-
-function documentLines(document: vscode.TextDocument): string[] {
-  return Array.from({ length: document.lineCount }, (_, i) => document.lineAt(i).text);
 }
 
 function basename(uri: vscode.Uri): string {

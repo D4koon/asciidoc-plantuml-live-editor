@@ -31,7 +31,6 @@ function saveState(patch) {
  * The latest content from the extension: the Diagrams of a PlantUML file,
  * or a converted AsciiDoc document (`html`) and its Diagrams.
  * @typedef {import('../src/diagrams').Diagram} Diagram
- * @typedef {import('../src/diagrams').Origin} Origin
  * @type {{ format: string, theme: string, nav?: { rendered: string }, diagrams: Diagram[], html?: string, blocks?: import('./documentEditing.js').SourceBlock[], titleBlock?: number } | undefined}
  */
 let latest;
@@ -74,59 +73,10 @@ function renderOne(source, dark) {
 /** The Diagram each rendered diagram element shows. @type {WeakMap<HTMLElement, Diagram>} */
 const diagramOf = new WeakMap();
 
-/** The Origin of a diagram's line (an SVG data-source-line counts from its first line). */
-function originOf(/** @type {HTMLElement} */ el, /** @type {number | undefined} */ sourceLine) {
-  return sourceLine === undefined ? undefined : (diagramOf.get(el)?.origins[sourceLine] ?? undefined);
-}
-
-/** Whether `origin` is a line of the file the preview renders (not of a file it includes). */
-function inRenderedFile(/** @type {Origin} */ origin) {
-  return origin.uri === latest?.nav?.rendered;
-}
-
 /** A diagram element to render: shows `diagram`. */
 function target(/** @type {HTMLElement} */ el, /** @type {Diagram} */ diagram) {
   diagramOf.set(el, diagram);
   return { el, source: diagram.lines.join('\n'), error: diagram.error };
-}
-
-/**
- * Where a diagram is written in the document, and the document line of a
- * line of it; undefined when the diagram isn't in the document itself.
- */
-function locateInDocument(/** @type {HTMLElement} */ el, /** @type {number | undefined} */ sourceLine) {
-  const block = diagramOf.get(el)?.block;
-  if (!block) return undefined;
-  const origin = originOf(el, sourceLine);
-  return { block, hint: origin && inRenderedFile(origin) ? origin.line : undefined };
-}
-
-/**
- * Where a diagram element was written, when that is another file than the
- * previewed one (it came through an include). Elements without a source line
- * are looked up by their texts.
- */
-function originElsewhere(/** @type {HTMLElement} */ el, /** @type {number | undefined} */ sourceLine, /** @type {string[]} */ texts) {
-  const diagram = diagramOf.get(el);
-  if (!diagram) return undefined;
-  let line = sourceLine;
-  if (line === undefined) {
-    const wanted = texts.filter((t) => t.trim());
-    const found = diagram.lines.findIndex((l) => wanted.some((t) => l.includes(t)));
-    line = found < 0 ? undefined : found;
-  }
-  const origin = originOf(el, line);
-  return origin && !inRenderedFile(origin) ? origin : undefined;
-}
-
-/**
- * A diagram that includes other files than the previewed one, for editing
- * across them; undefined otherwise (it is then edited through the document).
- */
-function expandedDiagram(/** @type {HTMLElement} */ el) {
-  const diagram = diagramOf.get(el);
-  if (!diagram || !diagram.origins.some((o) => o && !inRenderedFile(o))) return undefined;
-  return { lines: diagram.lines, origins: diagram.origins };
 }
 
 function isDark(theme) {
@@ -348,9 +298,7 @@ diagramsEl.addEventListener(
 setupDiagramInteraction({
   container: diagramsEl,
   post: (message) => vscode.postMessage(message),
-  locate: locateInDocument,
-  elsewhere: originElsewhere,
-  expand: expandedDiagram,
+  diagram: (el) => diagramOf.get(el),
   editable: document.body.dataset.readonly !== 'true',
   onBackgroundDblClick: () => {
     // In a document, double-click is for selecting words.

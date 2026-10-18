@@ -38,7 +38,6 @@ describe('Diagrams of an AsciiDoc document', () => {
       {
         lines: ['@startuml', 'A -> B', '@enduml'],
         origins: [null, at(DOC, 4), null],
-        block: { start: 3, end: 5 },
       },
       {
         lines: ['@startuml', 'X -> Y', '@enduml'],
@@ -47,7 +46,6 @@ describe('Diagrams of an AsciiDoc document', () => {
       {
         lines: ['@startuml', 'C -> D', '@enduml'],
         origins: [at(DOC, 11), at(part, 0), at(DOC, 13)],
-        block: { start: 10, end: 14 },
       },
     ]);
     expect(version.hasRead(flow)).toBe(true);
@@ -63,7 +61,6 @@ describe('Diagrams of an AsciiDoc document', () => {
       {
         lines: ['@startuml', 'A -> B', '@enduml'],
         origins: [at(DOC, 2), at(DOC, 3), null],
-        block: { start: 1, end: 4 },
       },
     ]);
   });

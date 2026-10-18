@@ -15,12 +15,10 @@ describe('Diagrams of a PlantUML file', () => {
       {
         lines: ['@startuml', 'A -> B', '@enduml'],
         origins: [at(MAIN, 1), at(MAIN, 2), at(MAIN, 3)],
-        block: { start: 1, end: 3 },
       },
       {
         lines: ['@startmindmap', '* root', '@endmindmap'],
         origins: [at(MAIN, 5), at(MAIN, 6), at(MAIN, 7)],
-        block: { start: 5, end: 7 },
       },
     ]);
   });
@@ -40,7 +38,6 @@ describe('Diagrams of a PlantUML file', () => {
       {
         lines: ['@startuml', 'actor Alice', 'skinparam backgroundColor #EEE', 'actor Bob', 'Alice -> Bob', '@enduml'],
         origins: [at(MAIN, 0), at(shared, 0), at(colors, 0), at(shared, 2), at(MAIN, 2), at(MAIN, 3)],
-        block: { start: 0, end: 3 },
       },
     ]);
     expect(version.hasRead(colors)).toBe(true);
@@ -53,7 +50,6 @@ describe('Diagrams of a PlantUML file', () => {
       {
         lines: ['@startuml', 'A -> B', 'B -> C', '@enduml'],
         origins: [null, at(MAIN, 0), at(MAIN, 1), null],
-        block: { start: -1, end: 2 },
       },
     ]);
   });
@@ -67,7 +63,6 @@ describe('Diagrams of a PlantUML file', () => {
       {
         lines: ['@startuml', 'A -> B', '', '', '@enduml'],
         origins: [at(MAIN, 0), at(MAIN, 1), at(MAIN, 2), at(MAIN, 3), null],
-        block: { start: 0, end: 4 },
       },
     ]);
   });

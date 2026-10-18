@@ -17,4 +17,4 @@ Spec: `.scratch/deepen-preview-modules/spec.md` (Protocol module)
 
 ## Notes from ticket 03
 
-- Rename the message types the glossary avoids: `ExpandedDiagram` (sent with select/rename/delete) and the diff view's `DiagramLine`; both are a Diagram's lines with their Origins.
+- Rename the diff view's `DiagramLine`, a name the glossary avoids (it is a line of a Diagram with its Origin). `ExpandedDiagram` is gone since ticket 04: select/rename/delete carry the Diagram.

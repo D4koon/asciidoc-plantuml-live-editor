@@ -68,8 +68,6 @@ interface AsciiDocDiagram {
   source: string;
   /** For each line of `source`, its line in the document, or -1. */
   lineMap: number[];
-  /** Document lines around the diagram (its delimiters); absent when read-only. */
-  block?: { start: number; end: number };
   /** For each line of `source`, the file and line it came from (also included files). */
   origins?: LineOrigins;
   /** Set when the diagram could not be loaded (e.g. a missing `plantuml::` file). */
@@ -552,7 +550,6 @@ async function prepareDiagram(
     source: source.join('\n'),
     lineMap,
     origins: { files: resolved.origins.files, lines: origins },
-    block: firstLine === undefined ? undefined : { start: firstLine - 1, end: firstLine + lines.length },
   };
 }
 

@@ -13,5 +13,5 @@ The file and line, within a Version, that one line of a Diagram came from. A lin
 _Avoid_: line map, line origin, source position, at
 
 **Diagram**:
-One PlantUML diagram as the engine saw it, taken out of a document: its lines with includes expanded, each line's Origin, and where it sits in the document.
+One PlantUML diagram as the engine saw it, taken out of a document: its lines with includes expanded, and each line's Origin.
 _Avoid_: expanded diagram, embedded diagram, diagram lines

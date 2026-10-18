@@ -17,7 +17,14 @@ The VS Code step only turns the per-file edits into a workspace edit and applies
 
 **Blocked by:** 02 (Extension produces Diagrams). Can run in parallel with 03.
 
-- [ ] Rename, delete and AsciiDoc block removal all go through the edit module
-- [ ] The three hand-written appliers in the preview are gone; what's left only applies the per-file edits
-- [ ] Tests cover: rename across several files; delete; block removal with its separating blank line; refusal when a line has no Origin; refusal when a file changed since the render; `!include_many` edited once; deleting a file's last line leaves no empty line; deleting the only line leaves an empty file
+- [x] Rename, delete and AsciiDoc block removal all go through the edit module
+- [x] The three hand-written appliers in the preview are gone; what's left only applies the per-file edits
+- [x] Tests cover: rename across several files; delete; block removal with its separating blank line; refusal when a line has no Origin; refusal when a file changed since the render; `!include_many` edited once; deleting a file's last line leaves no empty line; deleting the only line leaves an empty file
 - [ ] Checked by hand: rename and delete in a diagram with includes and in one without; removing an AsciiDoc block
+
+## Notes
+
+- The webview now sends the clicked element's Diagram with every select, rename and delete, and refs are positions in it, so a diagram without includes takes the same path (and gets the "changed" refusal too, where it used to edit the live document). Element refs no longer carry a block: the planners work between a Diagram's first and last line.
+- AsciiDoc block edits are a second entry point of the same module (`editBlock`): they check the block's text and decide about the separating blank line on the current document, then share the rules for turning line changes into file edits.
+- The Diagram's `block` was removed: nothing reads it any more (GLOSSARY updated).
+- To check by hand: a diagram whose lines were changed before the engine saw them (e.g. a recursive include replaced by a comment) refuses edits of those lines as "changed".

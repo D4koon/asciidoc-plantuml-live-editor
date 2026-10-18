@@ -14,13 +14,6 @@ export interface Diagram {
   lines: string[];
   /** For each line, its Origin; null for a line the engine was given without it being written anywhere. */
   origins: (Origin | null)[];
-  /**
-   * The document lines enclosing the lines the diagram is written in: its
-   * `@start…`/`@end…` lines, or an AsciiDoc block's delimiters; -1 and the
-   * document's length when the markers were added. Absent when it isn't
-   * written in the document itself (e.g. it comes from an included file).
-   */
-  block?: { start: number; end: number };
   /** Set when the diagram could not be loaded (e.g. a missing `plantuml::` file). */
   error?: string;
 }
@@ -41,14 +34,13 @@ export async function plantumlDiagrams(
   const documentLines = text.split(/\r\n|\r|\n/);
   const lines = inlineIncludes ? resolved.text.split('\n') : documentLines;
   const origins = inlineIncludes ? originsOf(resolved.origins) : documentLines.map((_, line) => ({ uri: document, line }));
-  return { diagrams: cut(lines, origins, document, documentLines.length), includes: resolved.includes };
+  return { diagrams: cut(lines, origins), includes: resolved.includes };
 }
 
 /** The Diagram of a diagram found in an AsciiDoc document (as `renderAsciiDoc` prepares it for the engine). */
 export function fromAsciiDoc(diagram: {
   source: string;
   origins?: LineOrigins;
-  block?: { start: number; end: number };
   error?: string;
 }): Diagram {
   if (diagram.error !== undefined) {
@@ -58,7 +50,6 @@ export function fromAsciiDoc(diagram: {
   return {
     lines: diagram.source.split('\n'),
     origins: originsOf(diagram.origins),
-    ...(diagram.block ? { block: diagram.block } : {}),
   };
 }
 
@@ -72,19 +63,13 @@ export function originsOf({ files, lines }: LineOrigins): (Origin | null)[] {
  * engine does: an unterminated diagram is closed, so something shows while
  * typing, and text without markers is one diagram.
  */
-function cut(lines: string[], origins: (Origin | null)[], document: string, documentLength: number): Diagram[] {
+function cut(lines: string[], origins: (Origin | null)[]): Diagram[] {
   const diagrams: Diagram[] = [];
-  const documentLine = (i: number) => (origins[i]?.uri === document ? origins[i]!.line : undefined);
   /** Lines `from`..`to`, closed with `closingMarker` (an added line) when the text lacks one. */
-  const diagram = (from: number, to: number, closingMarker?: string): Diagram => {
-    const start = documentLine(from);
-    const last = closingMarker === undefined ? documentLine(to) : documentLength;
-    return {
-      lines: [...lines.slice(from, to + 1), ...(closingMarker === undefined ? [] : [closingMarker])],
-      origins: [...origins.slice(from, to + 1), ...(closingMarker === undefined ? [] : [null])],
-      ...(start !== undefined && last !== undefined ? { block: { start, end: last } } : {}),
-    };
-  };
+  const diagram = (from: number, to: number, closingMarker?: string): Diagram => ({
+    lines: [...lines.slice(from, to + 1), ...(closingMarker === undefined ? [] : [closingMarker])],
+    origins: [...origins.slice(from, to + 1), ...(closingMarker === undefined ? [] : [null])],
+  });
 
   let start = -1;
   let kind = '';
@@ -108,7 +93,6 @@ function cut(lines: string[], origins: (Origin | null)[], document: string, docu
     diagrams.push({
       lines: ['@startuml', ...lines, '@enduml'],
       origins: [null, ...origins, null],
-      block: { start: -1, end: documentLength },
     });
   }
   return diagrams;
