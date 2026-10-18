@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { DiffMessage, DiffScroll, FileChanges, NoDiffMessage } from './protocol';
 import { filePathOf, pathKey, Version } from './versions';
 import { workspaceVersion } from './vscodeWorkspace';
 
@@ -9,30 +10,6 @@ import { workspaceVersion } from './vscodeWorkspace';
  * of them a version from git, opened at the same moment.
  */
 
-/** The changes of one file on one side of a diff, by line (zero-based). */
-export interface FileChanges {
-  /** Lines of this side that the other side doesn't have (changed, added or removed). */
-  changed: number[];
-  /** For each changed line, the last line of its paragraph (the run of non-blank lines it is in). */
-  ends: number[];
-  /** Positions where the other side has lines this side lacks: before that line (or at the end). */
-  gaps: number[];
-  /**
-   * Lines in the same paragraph as such lines of the other side (e.g. the
-   * paragraph lost its last line): the paragraph changed, though they didn't.
-   */
-  touched: number[];
-}
-
-/** What a preview needs to show the changes of its side. */
-export interface DiffMessage {
-  type: 'diff';
-  /** `old`: the left side (removed text); `new`: the right side (added text). */
-  side: 'old' | 'new';
-  /** By file URI as this side's preview knows it (the root and its includes). */
-  files: Record<string, FileChanges>;
-}
-
 /** The part of a preview the pairing needs. */
 export interface DiffSide {
   readonly uri: vscode.Uri;
@@ -42,23 +19,9 @@ export interface DiffSide {
   files(): string[];
   readonly onDidUpdate: vscode.Event<void>;
   readonly onDispose: vscode.Event<void>;
-  postDiff(message: DiffMessage | { type: 'diff'; side?: undefined } | DiffScroll): void;
+  postDiff(message: DiffMessage | NoDiffMessage | DiffScroll): void;
   /** Fired when the user scrolls the preview while it is a side of a diff. */
   readonly onDidScroll: vscode.Event<DiffScroll>;
-}
-
-/**
- * A scroll position by content: the top of the view is `fraction` of the way
- * into what line `line` of `uri` renders as (a block or diagram), or `gap`
- * pixels above it. `edge` is set at the very top or bottom.
- */
-export interface DiffScroll {
-  type: 'diffScroll';
-  uri?: string;
-  line?: number;
-  fraction?: number;
-  gap?: number;
-  edge?: 'top' | 'bottom';
 }
 
 /** For one file: which line of the other version each line corresponds to. */

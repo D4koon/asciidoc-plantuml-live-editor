@@ -1,41 +1,18 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { ElementRef, LineEdit, locateLine, planDelete, planRename, RenameRequest } from './diagramEdits';
+import { ElementRef, LineEdit, locateLine, planDelete, planRename } from './diagramEdits';
 import { AsciiDocResult, AsciiDocSettings, isAsciiDoc, listAsciiDocIncludes, renderAsciiDoc } from './asciidoc';
 import { Diagram, plantumlDiagrams } from './diagrams';
-import { BlockEdit, editBlock, editDiagram, Outcome } from './sourceEdits';
+import { editBlock, editDiagram, Outcome } from './sourceEdits';
 import { IncludeNode, resolveIncludes } from './includes';
 import { fileKey, filePathOf, isReadOnly, Version } from './versions';
 import { applyFileEdits, workspaceVersion } from './vscodeWorkspace';
-import { DiffMessage, DiffPairs, DiffScroll, DiffSide } from './diffs';
+import { DiffPairs, DiffSide } from './diffs';
+import { DiffMessage, DiffScroll, FromWebview, NoDiffMessage, ToWebview, UpdateMessage } from './protocol';
 
 interface PreviewState {
   uri: string;
 }
-
-/** A change made in the split view's embedded editor, relative to the text before the edit. */
-interface SourceChange {
-  offset: number;
-  length: number;
-  text: string;
-}
-
-/** Messages sent from the webview to the extension. */
-type WebviewMessage =
-  | { type: 'ready' }
-  | { type: 'svg'; requestId: number; svgs: string[] }
-  | { type: 'openSource' }
-  | { type: 'edit'; uri: string; version: number; changes: SourceChange[]; text: string }
-  | { type: 'split'; split: boolean }
-  | { type: 'select'; ref: ElementRef; diagram: Diagram }
-  | { type: 'rename'; request: RenameRequest; diagram: Diagram }
-  | { type: 'delete'; ref: ElementRef; diagram: Diagram }
-  | { type: 'revealLine'; line: number; uri?: string }
-  | ({ type: 'editBlock'; uri?: string } & BlockEdit)
-  | { type: 'openLink'; href: string }
-  | { type: 'show'; uri: string; line?: number }
-  | DiffScroll;
-
 
 const SPLIT_STATE_KEY = 'asciidocPlantumlLive.split';
 
@@ -113,7 +90,7 @@ class Preview implements vscode.Disposable, DiffSide {
     this.disposables.push(
       panel.onDidDispose(() => this.dispose()),
       panel.onDidChangeViewState(() => this.updateFocusContext()),
-      panel.webview.onDidReceiveMessage((message: WebviewMessage) => this.onMessage(message))
+      panel.webview.onDidReceiveMessage((message: FromWebview) => this.onMessage(message))
     );
     this.updateFocusContext();
   }
@@ -128,9 +105,14 @@ class Preview implements vscode.Disposable, DiffSide {
   }
 
   /** Shows the changes of this side of a diff (or, without `side`, no longer). */
-  postDiff(message: DiffMessage | { type: 'diff'; side?: undefined } | DiffScroll): void {
-    if (message.type === 'diff') this.diff = message.side ? message : undefined;
-    if (this.ready && !this.disposed) void this.panel.webview.postMessage(message);
+  postDiff(message: DiffMessage | NoDiffMessage | DiffScroll): void {
+    if (message.type === 'diff') this.diff = 'files' in message ? message : undefined;
+    if (this.ready && !this.disposed) this.post(message);
+  }
+
+  /** Sends a message to the webview. */
+  private post(message: ToWebview): void {
+    void this.panel.webview.postMessage(message);
   }
 
   /** Whether a change to `uri` affects this preview. */
@@ -160,7 +142,7 @@ class Preview implements vscode.Disposable, DiffSide {
     const requestId = this.nextRequestId++;
     return new Promise((resolve) => {
       this.svgRequests.set(requestId, resolve);
-      void this.panel.webview.postMessage({ type: 'requestSvg', requestId });
+      this.post({ type: 'requestSvg', requestId });
     });
   }
 
@@ -174,7 +156,7 @@ class Preview implements vscode.Disposable, DiffSide {
     const target = await this.renderTarget(shown, version);
     const format = isAsciiDoc(target) ? 'asciidoc' : 'plantuml';
     const text = await version.text(target);
-    let message: Record<string, unknown>;
+    let content: Pick<UpdateMessage, 'diagrams' | 'html' | 'blocks' | 'titleBlock'>;
     let includes: IncludeNode[];
     if (format === 'asciidoc') {
       let result: AsciiDocResult;
@@ -188,12 +170,13 @@ class Preview implements vscode.Disposable, DiffSide {
           includes: [],
         };
       }
-      message = { ...result };
+      const { html, diagrams, blocks, titleBlock } = result;
+      content = { html, diagrams, blocks, titleBlock };
       includes = result.includes;
     } else {
       const inlineIncludes = config.get<boolean>('resolveIncludes', true);
       const result = await plantumlDiagrams(text, target, version, inlineIncludes);
-      message = { diagrams: result.diagrams };
+      content = { diagrams: result.diagrams };
       includes = result.includes;
     }
 
@@ -205,14 +188,14 @@ class Preview implements vscode.Disposable, DiffSide {
     this.version = version;
     this.rendered = target;
     const dirty = vscode.workspace.textDocuments.filter((d) => d.isDirty).map((d) => d.uri.toString());
-    void this.panel.webview.postMessage({
+    this.post({
       type: 'update',
       uri: this.uri.toString(),
       format,
-      ...message,
+      ...content,
       includes: rootIncludes,
       nav: { root: this.uri.toString(), shown: shown.toString(), rendered: target.toString(), dirty },
-      theme: config.get<string>('theme', 'auto'),
+      theme: config.get<UpdateMessage['theme']>('theme', 'auto'),
     });
     this.onDidUpdateEmitter.fire();
   }
@@ -292,7 +275,7 @@ class Preview implements vscode.Disposable, DiffSide {
       return;
     }
     this.webviewSource = text;
-    void this.panel.webview.postMessage({
+    this.post({
       type: 'source',
       uri: uri.toString(),
       name: basename(uri),
@@ -304,7 +287,7 @@ class Preview implements vscode.Disposable, DiffSide {
     });
   }
 
-  private enqueueEdit(message: Extract<WebviewMessage, { type: 'edit' }>): void {
+  private enqueueEdit(message: Extract<FromWebview, { type: 'edit' }>): void {
     this.pendingEdits++;
     this.webviewSource = message.text;
     this.editQueue = this.editQueue
@@ -321,7 +304,7 @@ class Preview implements vscode.Disposable, DiffSide {
       });
   }
 
-  private async applyEdit({ uri: target, version, changes, text }: Extract<WebviewMessage, { type: 'edit' }>): Promise<void> {
+  private async applyEdit({ uri: target, version, changes, text }: Extract<FromWebview, { type: 'edit' }>): Promise<void> {
     // Edits name their file: ones still queued after navigating belong to the previous file.
     const uri = vscode.Uri.parse(target);
     const document = await vscode.workspace.openTextDocument(uri);
@@ -354,7 +337,7 @@ class Preview implements vscode.Disposable, DiffSide {
     return file ? vscode.Uri.file(path.dirname(file)) : vscode.Uri.joinPath(this.uri, '..');
   }
 
-  private onMessage(message: WebviewMessage): void {
+  private onMessage(message: FromWebview): void {
     if (this.readOnly && ['edit', 'rename', 'delete', 'editBlock'].includes(message.type)) {
       return; // the webview offers no editing here; don't act on stray messages
     }
@@ -363,7 +346,7 @@ class Preview implements vscode.Disposable, DiffSide {
         this.ready = true;
         this.webviewSource = undefined;
         this.appliedVersion = 0; // a reloaded webview restarts its edit versions
-        if (this.diff) void this.panel.webview.postMessage(this.diff);
+        if (this.diff) this.post(this.diff);
         void this.syncSource();
         this.scheduleUpdate(true);
         break;
@@ -444,7 +427,7 @@ class Preview implements vscode.Disposable, DiffSide {
       return;
     }
     if (uri.toString() === this.shown.toString()) {
-      void this.panel.webview.postMessage({ type: 'reveal', line });
+      this.post({ type: 'reveal', line });
     }
     const range = document.lineAt(line).range;
     for (const editor of vscode.window.visibleTextEditors) {
@@ -475,7 +458,7 @@ class Preview implements vscode.Disposable, DiffSide {
    * text removes the block. Refused if the lines changed since the preview
    * was rendered, since the edit would then land in the wrong place.
    */
-  private async applyBlockEdit({ uri, ...block }: Extract<WebviewMessage, { type: 'editBlock' }>): Promise<void> {
+  private async applyBlockEdit({ uri, ...block }: Extract<FromWebview, { type: 'editBlock' }>): Promise<void> {
     // Blocks of included files name their file.
     const outcome = await editBlock(uri ?? this.rendered.toString(), block, workspaceVersion());
     const changed = 'AsciiDoc: the document changed while you were editing. Please try again.';

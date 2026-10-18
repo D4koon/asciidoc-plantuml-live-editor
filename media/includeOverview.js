@@ -5,12 +5,8 @@
 // file); clicking a line number shows the file containing the directive, at it.
 
 /**
- * @typedef {{
- *   directive: string, target: string, file: string, line: number, uri?: string,
- *   status: 'ok' | 'missing' | 'recursive' | 'once' | 'builtin' | 'blocked',
- *   children: IncludeNode[],
- * }} IncludeNode
- * @typedef {{ root: string, shown: string, rendered: string, dirty: string[] }} Navigation
+ * @typedef {import('../src/includes').IncludeNode} IncludeNode
+ * @typedef {import('../src/protocol').Navigation} Navigation
  */
 
 const STATUS_TEXT = {
@@ -25,7 +21,7 @@ const STATUS_TEXT = {
  *   panel: HTMLDetailsElement,
  *   tree: HTMLElement,
  *   crumbs: HTMLElement,
- *   post: (message: object) => void,
+ *   post: PostToExtension,
  *   open: boolean,
  *   onToggle: (open: boolean) => void,
  * }} options

@@ -13,7 +13,7 @@ const CONNECTION_CLASSES = ['message', 'link'];
 /**
  * @param {{
  *   container: HTMLElement,
- *   post: (message: object) => void,
+ *   post: PostToExtension,
  *   diagram: (diagramEl: HTMLElement) => Diagram | undefined,
  *   editable: boolean,
  *   onBackgroundDblClick: () => void,

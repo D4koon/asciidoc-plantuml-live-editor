@@ -1,0 +1,15 @@
+{
+  // Type-checks the webview scripts (plain JavaScript with JSDoc types) against
+  // the extension's types, e.g. the message protocol. Nothing is emitted.
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"]
+  },
+  "files": ["media/preview.js", "media/webview.d.ts"]
+}

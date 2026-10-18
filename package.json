@@ -286,7 +286,7 @@
     "package": "vsce package",
     "copy-monaco": "node ./scripts/copy-monaco.mjs",
     "test": "vitest run",
-    "typecheck": "tsc -p ./ --noEmit && tsc -p ./test"
+    "typecheck": "tsc -p ./ --noEmit && tsc -p ./test && tsc -p ./tsconfig.webview.json"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

@@ -4,7 +4,7 @@
 // clicking a block reveals it in the source, double-clicking replaces it with
 // a text box holding its AsciiDoc source (so inline markup survives edits).
 
-/** @typedef {{ start: number, end: number, text: string, kind: 'line' | 'text' | 'none', uri?: string }} SourceBlock */
+/** @typedef {import('../src/asciidoc').AsciiDocBlock} SourceBlock */
 
 /**
  * Marks the rendered elements of `blocks` with `data-src`: sections on their
@@ -32,7 +32,7 @@ export function tagBlocks(root, blocks, titleBlock) {
 /**
  * @param {{
  *   container: HTMLElement,
- *   post: (message: object) => void,
+ *   post: PostToExtension,
  *   blocks: () => SourceBlock[],
  *   onEditEnd: () => void,
  *   editable: boolean,

@@ -9,6 +9,7 @@ node_modules/**
 **/*.map
 **/*.ts
 tsconfig.json
+tsconfig.webview.json
 .gitignore
 AGENTS.md
 CLAUDE.md

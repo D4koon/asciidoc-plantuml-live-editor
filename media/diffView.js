@@ -5,10 +5,9 @@
 // (e.g. for a changed skinparam), and the blocks of an AsciiDoc document.
 
 /**
- * @typedef {{ changed: number[], ends: number[], gaps: number[], touched?: number[] }} FileChanges
- * @typedef {{ side: 'old' | 'new', files: Record<string, FileChanges> }} Diff
- * @typedef {{ origin: import('../src/diagrams').Origin | null, text: string }} DiagramLine
- *   A line of a diagram's source as the engine saw it, with its Origin.
+ * @typedef {import('../src/protocol').DiffMessage} Diff
+ * @typedef {import('../src/protocol').DiffScroll} DiffScroll
+ * @typedef {import('../src/diagrams').Diagram} Diagram
  * @typedef {{ box: HTMLElement, mark: HTMLElement, uri: string, start: number, end: number, has: (uri: string, line: number) => boolean, diagram?: HTMLElement }} Region
  *   Something rendered from the lines `start`..`end` of `uri`: a diagram or a block.
  *   `mark` gets the change highlight, `box` the markers for removed or added lines.
@@ -20,12 +19,12 @@ const MARKS = ['pv-diff', 'pv-diff-diagram', 'pv-diff-block', 'pv-diff-gap-befor
  * @param {{
  *   container: HTMLElement,
  *   nav: HTMLElement,
- *   post: (message: object) => void,
- *   diagramLines: (diagram: HTMLElement) => DiagramLine[],
+ *   post: PostToExtension,
+ *   diagram: (diagramEl: HTMLElement) => Diagram | undefined,
  *   blocks: () => { el: HTMLElement, uri: string, start: number, end: number }[],
  * }} options
  */
-export function setupDiffView({ container, nav, post, diagramLines, blocks }) {
+export function setupDiffView({ container, nav, post, diagram: diagramAt, blocks }) {
   /** @type {Diff | undefined} */
   let diff;
   /** @type {HTMLElement[]} */
@@ -81,11 +80,11 @@ export function setupDiffView({ container, nav, post, diagramLines, blocks }) {
     /** @type {Region[]} */
     regions = [];
     for (const node of container.querySelectorAll('.diagram')) {
-      const diagram = /** @type {HTMLElement} */ (node);
-      const lines = diagramLines(diagram);
-      const region = diagramRegion(diagram, lines);
+      const diagramEl = /** @type {HTMLElement} */ (node);
+      const diagram = diagramAt(diagramEl) ?? { lines: [], origins: [] };
+      const region = diagramRegion(diagramEl, diagram);
       if (region) regions.push(region);
-      if (markDiagram(diagram, lines, isChanged, gaps, shown)) diagram.classList.add('pv-diff-diagram');
+      if (markDiagram(diagramEl, diagram, isChanged, gaps, shown)) diagramEl.classList.add('pv-diff-diagram');
     }
     for (const { el, uri, start, end } of blocks()) {
       const region = { box: el, mark: el, uri, start, end, has: (/** @type {string} */ u, /** @type {number} */ l) => u === uri && l >= start && l <= end };
@@ -182,6 +181,7 @@ export function setupDiffView({ container, nav, post, diagramLines, blocks }) {
     }, 30);
   });
 
+  /** @returns {Omit<DiffScroll, 'type'> | undefined} */
   function topPosition() {
     if (container.scrollTop <= 0) return { edge: 'top' };
     if (container.scrollTop + container.clientHeight >= container.scrollHeight - 1) return { edge: 'bottom' };
@@ -200,7 +200,7 @@ export function setupDiffView({ container, nav, post, diagramLines, blocks }) {
   }
 
   /** Scrolls so that the content the other side shows at its top is at the top here. */
-  function follow(/** @type {{ uri?: string, line?: number, fraction?: number, gap?: number, edge?: string }} */ position) {
+  function follow(/** @type {DiffScroll} */ position) {
     let target;
     if (position.edge === 'top') target = 0;
     else if (position.edge === 'bottom') target = container.scrollHeight;
@@ -236,20 +236,20 @@ export function setupDiffView({ container, nav, post, diagramLines, blocks }) {
 /**
  * The region of a diagram: the lines of the file it is written in. In a
  * document, its markers go on the whole block (with its title).
- * @param {HTMLElement} diagram
- * @param {DiagramLine[]} lines
+ * @param {HTMLElement} diagramEl
+ * @param {Pick<Diagram, 'origins'>} diagram
  * @returns {Region | undefined}
  */
-function diagramRegion(diagram, lines) {
-  const home = lines.find((l) => l.origin)?.origin?.uri;
+function diagramRegion(diagramEl, { origins }) {
+  const home = origins.find((o) => o)?.uri;
   if (!home) return undefined;
-  const own = lines.flatMap((l) => (l.origin && l.origin.uri === home ? [l.origin.line] : []));
-  const set = new Set(lines.flatMap((l) => (l.origin ? [`${l.origin.uri}\u0000${l.origin.line}`] : [])));
-  const box = /** @type {HTMLElement} */ (diagram.closest('.pv-adoc-diagram-block') ?? diagram);
+  const own = origins.flatMap((o) => (o && o.uri === home ? [o.line] : []));
+  const set = new Set(origins.flatMap((o) => (o ? [`${o.uri}\u0000${o.line}`] : [])));
+  const box = /** @type {HTMLElement} */ (diagramEl.closest('.pv-adoc-diagram-block') ?? diagramEl);
   return {
     box,
-    mark: diagram,
-    diagram,
+    mark: diagramEl,
+    diagram: diagramEl,
     uri: home,
     start: Math.min(...own),
     end: Math.max(...own),
@@ -260,23 +260,22 @@ function diagramRegion(diagram, lines) {
 /**
  * Highlights the changed elements of a diagram. Returns whether anything in
  * it changed, also what has no element of its own (e.g. a skinparam).
- * @param {HTMLElement} diagram
- * @param {DiagramLine[]} lines
+ * @param {HTMLElement} diagramEl
+ * @param {Pick<Diagram, 'lines' | 'origins'>} diagram
  * @param {(uri: string, line: number) => boolean} isChanged
  * @param {Map<string, Set<number>>} gaps
  * @param {(uri: string, line: number) => boolean} shown
  */
-function markDiagram(diagram, lines, isChanged, gaps, shown) {
-  const changedAt = lines.map((l) => !!l.origin && isChanged(l.origin.uri, l.origin.line));
+function markDiagram(diagramEl, { lines, origins }, isChanged, gaps, shown) {
+  const changedAt = origins.map((o) => !!o && isChanged(o.uri, o.line));
   let any = changedAt.some(Boolean);
   // Lines removed or added on the other side, between two lines of this diagram.
-  lines.forEach((l, i) => {
-    const prev = lines[i - 1]?.origin;
-    const origin = l.origin;
+  origins.forEach((origin, i) => {
+    const prev = origins[i - 1];
     if (origin && prev && prev.uri === origin.uri && prev.line === origin.line - 1 && gaps.get(origin.uri)?.has(origin.line)) any = true;
   });
-  lines.forEach((l, i) => changedAt[i] && l.origin && shown(l.origin.uri, l.origin.line));
-  const svg = diagram.querySelector('svg');
+  origins.forEach((o, i) => changedAt[i] && o && shown(o.uri, o.line));
+  const svg = diagramEl.querySelector('svg');
   if (!svg || !any) return any;
 
   const matched = new Set();
@@ -290,8 +289,8 @@ function markDiagram(diagram, lines, isChanged, gaps, shown) {
   // Lines without an element of their own (class members, note text, …):
   // texts that appear in a changed line and in no unchanged one.
   // Lines the engine was given without them being written anywhere count as neither.
-  const unchanged = lines.filter((l, i) => l.origin && !changedAt[i]).map((l) => l.text);
-  const open = lines.filter((_, i) => changedAt[i] && !matched.has(i)).map((l) => l.text);
+  const unchanged = lines.filter((_, i) => origins[i] && !changedAt[i]);
+  const open = lines.filter((_, i) => changedAt[i] && !matched.has(i));
   if (open.length) {
     for (const text of svg.querySelectorAll('text')) {
       const value = (text.textContent ?? '').trim();

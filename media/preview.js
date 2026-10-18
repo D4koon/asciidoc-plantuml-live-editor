@@ -10,6 +10,14 @@ import { setupDiffView } from './diffView.js';
 
 const vscode = acquireVsCodeApi();
 
+/**
+ * Sends a message to the extension.
+ * @param {import('../src/protocol').FromWebview} message
+ */
+function post(message) {
+  vscode.postMessage(message);
+}
+
 const mainEl = /** @type {HTMLElement} */ (document.getElementById('main'));
 const sourceEditorEl = /** @type {HTMLElement} */ (document.getElementById('source-editor'));
 const dividerEl = /** @type {HTMLElement} */ (document.getElementById('divider'));
@@ -31,7 +39,7 @@ function saveState(patch) {
  * The latest content from the extension: the Diagrams of a PlantUML file,
  * or a converted AsciiDoc document (`html`) and its Diagrams.
  * @typedef {import('../src/diagrams').Diagram} Diagram
- * @type {{ format: string, theme: string, nav?: { rendered: string }, diagrams: Diagram[], html?: string, blocks?: import('./documentEditing.js').SourceBlock[], titleBlock?: number } | undefined}
+ * @type {import('../src/protocol').UpdateMessage | undefined}
  */
 let latest;
 let generation = 0;
@@ -51,7 +59,7 @@ async function loadEngine() {
     const engine = await import(/** @type {string} */ (document.body.dataset.engine));
     renderToString = engine.renderToString;
     setStatus('');
-    vscode.postMessage({ type: 'ready' });
+    post({ type: 'ready' });
   } catch (e) {
     setStatus(`Failed to load the PlantUML engine: ${errorText(e)}`, true);
   }
@@ -72,6 +80,11 @@ function renderOne(source, dark) {
 
 /** The Diagram each rendered diagram element shows. @type {WeakMap<HTMLElement, Diagram>} */
 const diagramOf = new WeakMap();
+
+/** The Diagram a rendered diagram element shows. */
+function diagramAt(/** @type {HTMLElement} */ el) {
+  return diagramOf.get(el);
+}
 
 /** A diagram element to render: shows `diagram`. */
 function target(/** @type {HTMLElement} */ el, /** @type {Diagram} */ diagram) {
@@ -120,6 +133,7 @@ async function renderAll() {
   let failures = 0;
   for (const { el, source, error } of targets) {
     const key = `${dark}\u0000${source}\u0000${error ?? ''}`;
+    /** @type {{ svg?: string, error?: string } | undefined} */
     let result = el.dataset.key === key ? { svg: el.dataset.svg ? el.innerHTML : undefined, error: el.textContent ?? '' } : undefined;
     if (result) {
       cache.set(key, result);
@@ -213,7 +227,7 @@ function documentTargets() {
 
 const documentEditing = setupDocumentEditing({
   container: diagramsEl,
-  post: (message) => vscode.postMessage(message),
+  post,
   blocks: () => renderedBlocks,
   onEditEnd: () => void renderAll(),
   editable: document.body.dataset.readonly !== 'true',
@@ -221,21 +235,11 @@ const documentEditing = setupDocumentEditing({
 
 // ----------------------------------------------------------------- diff ---
 
-/**
- * Each line of a diagram as the engine saw it (index = the SVG's
- * data-source-line), with its Origin.
- * @returns {import('./diffView.js').DiagramLine[]}
- */
-function diagramLines(/** @type {HTMLElement} */ el) {
-  const diagram = diagramOf.get(el);
-  return diagram ? diagram.lines.map((text, i) => ({ text, origin: diagram.origins[i] })) : [];
-}
-
 const diffView = setupDiffView({
   container: diagramsEl,
   nav: /** @type {HTMLElement} */ (document.getElementById('diff-nav')),
-  post: (message) => vscode.postMessage(message),
-  diagramLines,
+  post,
+  diagram: diagramAt,
   blocks: () => {
     const rendered = latest?.nav?.rendered;
     if (!rendered) return [];
@@ -256,7 +260,7 @@ diagramsEl.addEventListener('click', (e) => {
   if (href.startsWith('#')) {
     document.getElementById(decodeURIComponent(href.slice(1)))?.scrollIntoView({ behavior: 'smooth' });
   } else {
-    vscode.postMessage({ type: 'openLink', href });
+    post({ type: 'openLink', href });
   }
 });
 
@@ -297,15 +301,15 @@ diagramsEl.addEventListener(
 );
 setupDiagramInteraction({
   container: diagramsEl,
-  post: (message) => vscode.postMessage(message),
-  diagram: (el) => diagramOf.get(el),
+  post,
+  diagram: diagramAt,
   editable: document.body.dataset.readonly !== 'true',
   onBackgroundDblClick: () => {
     // In a document, double-click is for selecting words.
-    if (!split && !isDocument) vscode.postMessage({ type: 'openSource' });
+    if (!split && !isDocument) post({ type: 'openSource' });
   },
 });
-document.getElementById('edit-source')?.addEventListener('click', () => vscode.postMessage({ type: 'openSource' }));
+document.getElementById('edit-source')?.addEventListener('click', () => post({ type: 'openSource' }));
 
 // ----------------------------------------------------------- split view ---
 // Only the in-place preview (custom editor) offers the embedded source editor,
@@ -319,7 +323,7 @@ let split = canSplit && (state.split ?? document.body.dataset.split === 'true');
 /**
  * Latest raw source from VS Code, kept so the editor can be created on demand.
  * `uri` is the file shown in the editor: the root, or a file it includes.
- * @type {{ uri: string, language: 'plantuml' | 'asciidoc', text: string, eol: string, ackVersion: number } | undefined}
+ * @type {import('../src/protocol').SourceMessage | undefined}
  */
 let latestSource;
 /** The file the embedded editor holds (its edits are sent for this file). */
@@ -348,7 +352,7 @@ async function ensureSourceEditor() {
         text,
         eol,
         language,
-        onEdit: (edit) => vscode.postMessage({ type: 'edit', uri: editorFile, ...edit }),
+        onEdit: (edit) => post({ type: 'edit', uri: editorFile, ...edit }),
       });
       if (statusEl.textContent === 'Loading editor…') setStatus('');
       sourceEditor = created;
@@ -368,7 +372,7 @@ if (canSplit) {
   splitBtn.addEventListener('click', () => {
     split = !split;
     saveState({ split });
-    vscode.postMessage({ type: 'split', split });
+    post({ type: 'split', split });
     applySplit();
     if (split) sourceEditor?.focus();
   });
@@ -380,7 +384,7 @@ const includeOverview = setupIncludeOverview({
   panel: /** @type {HTMLDetailsElement} */ (document.getElementById('includes')),
   tree: /** @type {HTMLElement} */ (document.getElementById('include-tree')),
   crumbs: /** @type {HTMLElement} */ (document.getElementById('crumbs')),
-  post: (message) => vscode.postMessage(message),
+  post,
   open: state.includesOpen ?? true,
   onToggle: (open) => saveState({ includesOpen: open }),
 });
@@ -406,19 +410,11 @@ dividerEl.addEventListener('pointerdown', (e) => {
 
 // ------------------------------------------------------------- messages ---
 
-window.addEventListener('message', (event) => {
+window.addEventListener('message', (/** @type {MessageEvent<import('../src/protocol').ToWebview>} */ event) => {
   const message = event.data;
   switch (message.type) {
     case 'update':
-      latest = {
-        format: message.format ?? renderedFormat,
-        theme: message.theme,
-        nav: message.nav,
-        html: message.html,
-        diagrams: message.diagrams ?? [],
-        blocks: message.blocks,
-        titleBlock: message.titleBlock,
-      };
+      latest = message;
       saveState({ uri: message.uri });
       includeOverview.update(message.includes, message.nav);
       void renderAll();
@@ -427,13 +423,13 @@ window.addEventListener('message', (event) => {
       sourceEditor?.revealLine(message.line);
       break;
     case 'diff':
-      diffView.set(message.side ? { side: message.side, files: message.files } : undefined);
+      diffView.set('files' in message ? message : undefined);
       break;
     case 'diffScroll':
       diffView.follow(message);
       break;
     case 'source':
-      latestSource = { uri: message.uri, language: message.language, text: message.text, eol: message.eol, ackVersion: message.ackVersion };
+      latestSource = message;
       if (sourceEditor) {
         applySource(latestSource);
       } else if (split) {
@@ -444,7 +440,7 @@ window.addEventListener('message', (event) => {
       const svgs = [...diagramsEl.querySelectorAll('.diagram')].map((el) =>
         el instanceof HTMLElement && el.dataset.svg ? el.innerHTML : ''
       );
-      vscode.postMessage({ type: 'svg', requestId: message.requestId, svgs });
+      post({ type: 'svg', requestId: message.requestId, svgs });
       break;
     }
   }

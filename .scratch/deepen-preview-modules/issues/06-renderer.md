@@ -21,3 +21,8 @@ The rendering tests from ticket 02 move up to the renderer and are extended to c
 ## Notes from ticket 03
 
 - AsciiDoc rendering still prepares diagrams in an older private shape (with a line map) and converts them to Diagrams at the end; have it produce Diagrams directly.
+
+## Notes from ticket 05
+
+- The update message has `html`, `blocks` and `titleBlock` as separate optional fields that only make sense together (an AsciiDoc document); the renderer's typed update could group them.
+
