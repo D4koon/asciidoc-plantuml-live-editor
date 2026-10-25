@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { IncludeNode, LineOrigins, resolveIncludes } from './includes';
+import { IncludeNode, resolveIncludes } from './includes';
 import { Version } from './versions';
 
 /** The file (a URI) and zero-based line, within a Version, that a line of a Diagram came from. */
@@ -32,30 +32,9 @@ export async function plantumlDiagrams(
   const resolved = await resolveIncludes(text, uri, version);
   const document = uri.toString();
   const documentLines = text.split(/\r\n|\r|\n/);
-  const lines = inlineIncludes ? resolved.text.split('\n') : documentLines;
-  const origins = inlineIncludes ? originsOf(resolved.origins) : documentLines.map((_, line) => ({ uri: document, line }));
+  const lines = inlineIncludes ? resolved.lines : documentLines;
+  const origins = inlineIncludes ? resolved.origins : documentLines.map((_, line) => ({ uri: document, line }));
   return { diagrams: cut(lines, origins), includes: resolved.includes };
-}
-
-/** The Diagram of a diagram found in an AsciiDoc document (as `renderAsciiDoc` prepares it for the engine). */
-export function fromAsciiDoc(diagram: {
-  source: string;
-  origins?: LineOrigins;
-  error?: string;
-}): Diagram {
-  if (diagram.error !== undefined) {
-    return { lines: [], origins: [], error: diagram.error };
-  }
-  if (!diagram.origins) throw new Error('A diagram without an error must have its origins');
-  return {
-    lines: diagram.source.split('\n'),
-    origins: originsOf(diagram.origins),
-  };
-}
-
-/** Converts what include resolution reports, a file index and line per line, into Origins. */
-export function originsOf({ files, lines }: LineOrigins): (Origin | null)[] {
-  return lines.map(([file, line]) => (file >= 0 ? { uri: files[file], line } : null));
 }
 
 /**

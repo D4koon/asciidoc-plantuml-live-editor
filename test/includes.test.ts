@@ -11,6 +11,6 @@ describe('PlantUML includes', () => {
 
     const resolved = await resolveIncludes(text, main, new Version(workspace));
 
-    expect(resolved.text.split('\n')).toEqual(['@startuml', 'Alice -> Bob', '@enduml']);
+    expect(resolved.lines).toEqual(['@startuml', 'Alice -> Bob', '@enduml']);
   });
 });

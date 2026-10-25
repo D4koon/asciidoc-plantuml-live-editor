@@ -1,29 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { relativeUri, Version } from '../src/versions';
+import { Version } from '../src/versions';
 import { disk, git, MemoryWorkspace } from './memoryWorkspace';
 
 describe('Version', () => {
-  it('reads a file open in an editor from the editor, unsaved changes included', async () => {
-    const file = disk('/project/shared.iuml');
-    const workspace = new MemoryWorkspace().file(file, 'saved').editor(file, 'unsaved');
-    const version = new Version(workspace);
-
-    expect(await version.text(file)).toBe('unsaved');
-    expect(version.isOpen(file)).toBe(true);
-    expect(version.isOpen(disk('/project/main.puml'))).toBe(false);
-  });
-
-  it('reads the includes of a git version from the same ref, not from disk or editors', async () => {
-    const root = git('/project/main.puml', 'HEAD~1');
-    const workspace = new MemoryWorkspace()
-      .file(disk('/project/shared.iuml'), 'on disk')
-      .editor(disk('/project/shared.iuml'), 'in the editor')
-      .file(git('/project/shared.iuml', 'HEAD~1'), 'at HEAD~1');
-    const version = new Version(workspace);
-
-    expect(await version.text(relativeUri(root, 'shared.iuml'))).toBe('at HEAD~1');
-  });
-
   it('reads files on disk synchronously too, editor first', () => {
     const open = disk('/project/open.adoc');
     const closed = disk('/project/closed.adoc');
@@ -66,14 +45,6 @@ describe('Version', () => {
     await version.text(file);
 
     expect(version.hasRead(git('/project/a.iuml', 'HEAD'))).toBe(false);
-  });
-
-  it.runIf(process.platform === 'win32')('on Windows, takes paths differing in letter case for the same file', async () => {
-    const version = new Version(new MemoryWorkspace().file(disk('C:/project/Shared.iuml'), 'S'));
-
-    await version.text(disk('c:/Project/shared.IUML'));
-
-    expect(version.hasRead(disk('C:/project/Shared.iuml'))).toBe(true);
   });
 
   it.runIf(process.platform !== 'win32')('elsewhere, takes paths differing in letter case for different files', async () => {

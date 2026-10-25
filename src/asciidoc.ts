@@ -1,7 +1,7 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { Diagram, fromAsciiDoc } from './diagrams';
-import { IncludeNode, LineOrigins, resolveIncludes } from './includes';
+import { Diagram, Origin } from './diagrams';
+import { IncludeNode, resolveIncludes } from './includes';
 import { fileKey, filePathOf, samePath, uriInVersion, Version } from './versions';
 
 // Asciidoctor.js 4 ships its own CommonJS build; its types target ESM resolution.
@@ -62,18 +62,6 @@ export function isAsciiDoc(uri: vscode.Uri): boolean {
   return ASCIIDOC_EXTENSIONS.test(uri.path);
 }
 
-/** A PlantUML diagram found in an AsciiDoc document. */
-interface AsciiDocDiagram {
-  /** Diagram text for the engine, starting at its `@start…` line. */
-  source: string;
-  /** For each line of `source`, its line in the document, or -1. */
-  lineMap: number[];
-  /** For each line of `source`, the file and line it came from (also included files). */
-  origins?: LineOrigins;
-  /** Set when the diagram could not be loaded (e.g. a missing `plantuml::` file). */
-  error?: string;
-}
-
 /**
  * A block of the document that can be edited in the preview: its element
  * carries the role `pv-src-<index>`.
@@ -118,8 +106,6 @@ interface RawDiagram {
   lines: string[];
   /** File the diagram text came from, for resolving its `!include`s. */
   baseUri: vscode.Uri;
-  /** Zero-based document line of the first content line; undefined if not in the document itself. */
-  firstLine?: number;
   /** Zero-based line of the first content line in `baseUri`. */
   startLine: number;
   error?: string;
@@ -160,7 +146,6 @@ export async function renderAsciiDoc(
         lines: reader.getLines(),
         baseUri: included ? uriInVersion(uri, file) : uri,
         // The cursor is 1-based and points at the first content line.
-        firstLine: included ? undefined : cursor.getLineNumber() - 1,
         startLine: cursor.getLineNumber() - 1,
       });
       const block = this.createPassBlock(parent, placeholder(raw.length - 1, attrs), {});
@@ -230,13 +215,11 @@ export async function renderAsciiDoc(
   );
   const html = await doc.convert();
 
-  const prepared: AsciiDocDiagram[] = [];
+  const diagrams: Diagram[] = [];
   for (const diagram of raw) {
-    prepared.push(
-      diagram.error ? { source: '', lineMap: [], error: diagram.error } : await prepareDiagram(diagram, inlineIncludes, version)
-    );
+    diagrams.push(await toDiagram(diagram, inlineIncludes, version));
   }
-  return { html, diagrams: prepared.map(fromAsciiDoc), blocks, titleBlock, includes };
+  return { html, diagrams, blocks, titleBlock, includes };
 }
 
 /** The include tree of a document, without rendering it. */
@@ -510,47 +493,33 @@ function findInIncludes(
   return undefined;
 }
 
-/** Resolves includes and trims/wraps the text so it starts at `@start…`. */
-async function prepareDiagram(
-  { lines, baseUri, firstLine, startLine }: RawDiagram,
-  inlineIncludes: boolean,
-  version: Version
-): Promise<AsciiDocDiagram> {
+/** The Diagram of a block or macro: includes resolved, trimmed or wrapped to start at `@start…`. */
+async function toDiagram({ lines, baseUri, startLine, error }: RawDiagram, inlineIncludes: boolean, version: Version): Promise<Diagram> {
+  if (error !== undefined) return { lines: [], origins: [], error };
   const base = baseUri.toString();
   const resolved = inlineIncludes
     ? await resolveIncludes(lines.join('\n'), baseUri, version)
-    : { text: lines.join('\n'), lineMap: lines.map((_, i) => i), origins: { files: [base], lines: lines.map((_, i): [number, number] => [0, i]) } };
-  let source = resolved.text.split('\n');
-  let lineMap = resolved.lineMap.map((i) => (i < 0 || firstLine === undefined ? -1 : firstLine + i));
+    : { lines, origins: lines.map((_, line) => ({ uri: base, line })) };
+  let source = resolved.lines;
   // Lines of the block itself are counted from its first line; included files from their start.
-  const baseIndex = resolved.origins.files.indexOf(base);
-  let origins = resolved.origins.lines.map(([f, l]): [number, number] => [f, f === baseIndex ? l + startLine : l]);
-  const none: [number, number] = [-1, -1];
+  let origins: (Origin | null)[] = resolved.origins.map((o) => (o.uri === base ? { uri: base, line: o.line + startLine } : o));
 
   const start = source.findIndex((l) => /^\s*@start\w+/.test(l));
   if (start < 0) {
     // Asciidoctor Diagram allows omitting @startuml/@enduml.
     source = ['@startuml', ...source, '@enduml'];
-    lineMap = [-1, ...lineMap, -1];
-    origins = [none, ...origins, none];
+    origins = [null, ...origins, null];
   } else {
     let end = source.findIndex((l, i) => i > start && /^\s*@end\w+/.test(l));
     if (end < 0) {
-      source.push('@enduml');
-      lineMap.push(-1);
-      origins.push(none);
+      source = [...source, '@enduml'];
+      origins = [...origins, null];
       end = source.length - 1;
     }
     source = source.slice(start, end + 1);
-    lineMap = lineMap.slice(start, end + 1);
     origins = origins.slice(start, end + 1);
   }
-
-  return {
-    source: source.join('\n'),
-    lineMap,
-    origins: { files: resolved.origins.files, lines: origins },
-  };
+  return { lines: source, origins };
 }
 
 function placeholder(index: number, attrs: Record<string, unknown>): string {

@@ -22,25 +22,38 @@ export interface Navigation {
   dirty: string[];
 }
 
-/** The rendered content: the Diagrams of a PlantUML file, or an AsciiDoc document. */
-export interface UpdateMessage {
+/** An AsciiDoc document, converted. */
+export interface ConvertedDocument {
+  html: string;
+  /** Its editable blocks, by their `pv-src-<index>` role. */
+  blocks: AsciiDocBlock[];
+  /** Index into `blocks` of the document title, if editable. */
+  titleBlock?: number;
+}
+
+/** What a render produces: the Diagrams of a PlantUML file, or an AsciiDoc document. */
+export type Rendered = (
+  | { format: 'plantuml' }
+  | {
+      format: 'asciidoc';
+      /** The document the diagrams are placed in. */
+      asciidoc: ConvertedDocument;
+    }
+) & {
+  /** For AsciiDoc, in the order of the document's placeholders (`data-diagram`). */
+  diagrams: Diagram[];
+  /** The root's include tree, for the overview. */
+  includes: IncludeNode[];
+};
+
+/** The rendered content, with what the preview shows around it. */
+export type UpdateMessage = Rendered & {
   type: 'update';
   /** The tab's file. */
   uri: string;
-  format: 'plantuml' | 'asciidoc';
   theme: 'auto' | 'light' | 'dark';
-  /** For AsciiDoc, in the order of the document's placeholders (`data-diagram`). */
-  diagrams: Diagram[];
-  /** AsciiDoc: the converted document. */
-  html?: string;
-  /** AsciiDoc: its editable blocks, by their `pv-src-<index>` role. */
-  blocks?: AsciiDocBlock[];
-  /** AsciiDoc: index into `blocks` of the document title, if editable. */
-  titleBlock?: number;
-  /** The root's include tree, for the overview. */
-  includes: IncludeNode[];
   nav: Navigation;
-}
+};
 
 /** The text of the file in the split view's editor. */
 export interface SourceMessage {

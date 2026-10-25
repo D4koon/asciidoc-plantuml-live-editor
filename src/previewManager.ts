@@ -1,10 +1,10 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { ElementRef, LineEdit, locateLine, planDelete, planRename } from './diagramEdits';
-import { AsciiDocResult, AsciiDocSettings, isAsciiDoc, listAsciiDocIncludes, renderAsciiDoc } from './asciidoc';
-import { Diagram, plantumlDiagrams } from './diagrams';
+import { isAsciiDoc } from './asciidoc';
+import { Diagram } from './diagrams';
 import { editBlock, editDiagram, Outcome } from './sourceEdits';
-import { IncludeNode, resolveIncludes } from './includes';
+import { Render, render, RenderSettings, rendersAlone } from './renderer';
 import { fileKey, filePathOf, isReadOnly, Version } from './versions';
 import { applyFileEdits, workspaceVersion } from './vscodeWorkspace';
 import { DiffPairs, DiffSide } from './diffs';
@@ -47,8 +47,8 @@ class Preview implements vscode.Disposable, DiffSide {
   // fragments (e.g. a file of skinparams), which are previewed through the root.
   private shown: vscode.Uri;
   private rendered: vscode.Uri;
-  /** The files the last render read (the root's and the rendered file's includes); their changes re-render live. */
-  private version: Version | undefined;
+  /** The last render: the files it read (the root's and the rendered file's includes) re-render live. */
+  private lastRender: Render | undefined;
   /** Set while the editor was switched by a click in the preview: the file the preview keeps showing. */
   private keptPreview: vscode.Uri | undefined;
   /** Files other than the root edited in this tab, to remind about unsaved changes. */
@@ -101,7 +101,7 @@ class Preview implements vscode.Disposable, DiffSide {
 
   /** The URIs of the files shown: the tab's own and every file it includes. */
   files(): string[] {
-    return [this.uri.toString(), this.rendered.toString(), ...(this.version?.files().map(String) ?? [])];
+    return [this.uri.toString(), this.rendered.toString(), ...(this.lastRender?.dependencies.map(String) ?? [])];
   }
 
   /** Shows the changes of this side of a diff (or, without `side`, no longer). */
@@ -117,7 +117,7 @@ class Preview implements vscode.Disposable, DiffSide {
 
   /** Whether a change to `uri` affects this preview. */
   dependsOn(uri: vscode.Uri): boolean {
-    return fileKey(uri) === fileKey(this.uri) || fileKey(uri) === fileKey(this.shown) || !!this.version?.hasRead(uri);
+    return fileKey(uri) === fileKey(this.uri) || fileKey(uri) === fileKey(this.shown) || !!this.lastRender?.dependsOn(uri);
   }
 
   scheduleUpdate(immediate = false): void {
@@ -150,80 +150,38 @@ class Preview implements vscode.Disposable, DiffSide {
     if (!this.ready) {
       return;
     }
-    const config = vscode.workspace.getConfiguration('asciidocPlantumlLive');
     const shown = this.shown;
     const version = workspaceVersion();
-    const target = await this.renderTarget(shown, version);
-    const format = isAsciiDoc(target) ? 'asciidoc' : 'plantuml';
-    const text = await version.text(target);
-    let content: Pick<UpdateMessage, 'diagrams' | 'html' | 'blocks' | 'titleBlock'>;
-    let includes: IncludeNode[];
-    if (format === 'asciidoc') {
-      let result: AsciiDocResult;
-      try {
-        result = await renderAsciiDoc(text, target, version, asciiDocSettings());
-      } catch (e) {
-        result = {
-          html: `<div class="pv-adoc-error">AsciiDoc conversion failed: ${String(e)}</div>`,
-          diagrams: [],
-          blocks: [],
-          includes: [],
-        };
-      }
-      const { html, diagrams, blocks, titleBlock } = result;
-      content = { html, diagrams, blocks, titleBlock };
-      includes = result.includes;
-    } else {
-      const inlineIncludes = config.get<boolean>('resolveIncludes', true);
-      const result = await plantumlDiagrams(text, target, version, inlineIncludes);
-      content = { diagrams: result.diagrams };
-      includes = result.includes;
-    }
-
-    // The overview always shows the root's includes.
-    const rootIncludes = target.toString() === this.uri.toString() ? includes : await this.listIncludes(this.uri, version);
+    const document = await this.renderTarget(shown, version);
+    const result = await render({ document, root: this.uri }, version, renderSettings());
     if (this.disposed || shown !== this.shown) {
       return; // closed, or navigated elsewhere, while the files were loading
     }
-    this.version = version;
-    this.rendered = target;
+    this.lastRender = result;
+    this.rendered = document;
     const dirty = vscode.workspace.textDocuments.filter((d) => d.isDirty).map((d) => d.uri.toString());
     this.post({
       type: 'update',
       uri: this.uri.toString(),
-      format,
-      ...content,
-      includes: rootIncludes,
-      nav: { root: this.uri.toString(), shown: shown.toString(), rendered: target.toString(), dirty },
-      theme: config.get<UpdateMessage['theme']>('theme', 'auto'),
+      ...result.update,
+      nav: { root: this.uri.toString(), shown: shown.toString(), rendered: document.toString(), dirty },
+      theme: vscode.workspace.getConfiguration('asciidocPlantumlLive').get<UpdateMessage['theme']>('theme', 'auto'),
     });
     this.onDidUpdateEmitter.fire();
   }
 
   /**
    * The file to preview while `shown` is in the editor: the file itself if it
-   * renders on its own (an AsciiDoc file, or PlantUML with `@start…`),
-   * otherwise the root, which shows the fragment's effect.
+   * renders on its own, otherwise the root, which shows the fragment's effect.
    */
   private async renderTarget(shown: vscode.Uri, version: Version): Promise<vscode.Uri> {
     if (this.keptPreview) {
       return this.keptPreview;
     }
-    if (shown.toString() === this.uri.toString() || isAsciiDoc(shown)) {
+    if (shown.toString() === this.uri.toString()) {
       return shown;
     }
-    try {
-      return /^\s*@start\w+/m.test(await version.text(shown)) ? shown : this.uri;
-    } catch {
-      return this.uri;
-    }
-  }
-
-  private async listIncludes(uri: vscode.Uri, version: Version): Promise<IncludeNode[]> {
-    const text = await version.text(uri);
-    return isAsciiDoc(uri)
-      ? listAsciiDocIncludes(text, uri, version, asciiDocSettings())
-      : (await resolveIncludes(text, uri, version)).includes;
+    return (await rendersAlone(shown, version)) ? shown : this.uri;
   }
 
   /**
@@ -752,11 +710,11 @@ export class PreviewManager
   }
 }
 
-/** The AsciiDoc settings from the configuration. */
-function asciiDocSettings(): AsciiDocSettings {
+/** The settings rendering depends on, from the configuration. */
+function renderSettings(): RenderSettings {
   const config = vscode.workspace.getConfiguration('asciidocPlantumlLive');
   return {
-    safeMode: config.get<AsciiDocSettings['safeMode']>('asciidoc.safeMode', 'safe'),
+    safeMode: config.get<RenderSettings['safeMode']>('asciidoc.safeMode', 'safe'),
     inlineIncludes: config.get<boolean>('resolveIncludes', true),
     defaultDir: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
   };

@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import type { Origin } from './diagrams';
 import { fileKey, relativeUri, Version } from './versions';
 
 const MAX_DEPTH = 16;
@@ -13,39 +14,20 @@ const START_END_RE = /^\s*@(start|end)\w+/;
 export async function resolveIncludes(text: string, baseUri: vscode.Uri, version: Version): Promise<ResolvedText> {
   const includes: IncludeNode[] = [];
   const lines = await expand(text, baseUri, version, new Set([fileKey(baseUri)]), new Set(), 0, includes);
-  const base = baseUri.toString();
-  const files: string[] = [];
-  const origins = lines.map((l): [number, number] => {
-    let index = files.indexOf(l.file);
-    if (index < 0) index = files.push(l.file) - 1;
-    return [index, l.origin];
-  });
   return {
-    text: lines.map((l) => l.text).join('\n'),
-    lineMap: lines.map((l) => (l.file === base ? l.origin : -1)),
-    origins: { files, lines: origins },
+    lines: lines.map((l) => l.text),
+    origins: lines.map(({ file, origin }) => ({ uri: file, line: origin })),
     includes,
   };
 }
 
 export interface ResolvedText {
-  text: string;
-  /** For each line of `text`, its line in the original document, or -1 if it came from an include. */
-  lineMap: number[];
-  /** For each line of `text`, the file it came from (also for included lines). */
-  origins: LineOrigins;
+  /** The lines of the text, with includes expanded. */
+  lines: string[];
+  /** For each line, the file and line it was written at (also for included lines). */
+  origins: Origin[];
   /** The include directives of the text, with the ones nested in the included files. */
   includes: IncludeNode[];
-}
-
-/**
- * Where each line of a text came from: `lines[i]` is `[file, line]`, an
- * index into `files` (URIs) and a zero-based line there, or `[-1, -1]` for
- * lines added along the way (e.g. a synthesized `@startuml`).
- */
-export interface LineOrigins {
-  files: string[];
-  lines: [number, number][];
 }
 
 /** An include directive, for the split view's overview of included files. */

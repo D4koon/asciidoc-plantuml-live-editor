@@ -37,7 +37,7 @@ function saveState(patch) {
 
 /**
  * The latest content from the extension: the Diagrams of a PlantUML file,
- * or a converted AsciiDoc document (`html`) and its Diagrams.
+ * or a converted AsciiDoc document (`asciidoc`) and its Diagrams.
  * @typedef {import('../src/diagrams').Diagram} Diagram
  * @type {import('../src/protocol').UpdateMessage | undefined}
  */
@@ -203,18 +203,19 @@ let renderedDiagrams = [];
 
 /** AsciiDoc: inserts the converted document and returns its diagram placeholders. */
 function documentTargets() {
-  if (!latest?.html) return [];
+  if (latest?.format !== 'asciidoc') return [];
+  const converted = latest.asciidoc;
   // While a block is being edited, keep the document as it is; the edit's end re-renders.
   if (!documentEditing.isEditing()) {
     // Diagrams and blocks are referenced by index, so with the same HTML only their
     // data changes (e.g. an edited !include file changes a diagram, not the HTML).
-    renderedBlocks = latest.blocks ?? [];
+    renderedBlocks = converted.blocks;
     renderedDiagrams = latest.diagrams;
-    if (latest.html !== renderedHtml) {
-      renderedHtml = latest.html;
+    if (converted.html !== renderedHtml) {
+      renderedHtml = converted.html;
       const scrollTop = diagramsEl.scrollTop;
-      diagramsEl.innerHTML = `<div class="adoc">${latest.html}</div>`;
-      tagBlocks(diagramsEl, renderedBlocks, latest.titleBlock);
+      diagramsEl.innerHTML = `<div class="adoc">${converted.html}</div>`;
+      tagBlocks(diagramsEl, renderedBlocks, converted.titleBlock);
       diagramsEl.scrollTop = scrollTop;
     }
   }
