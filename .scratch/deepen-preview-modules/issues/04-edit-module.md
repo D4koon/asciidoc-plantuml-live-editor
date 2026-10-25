@@ -1,6 +1,6 @@
 # 04: One edit module
 
-Status: ready-for-agent
+Status: done
 
 Spec: `.scratch/deepen-preview-modules/spec.md` (Edit module, Testing Decisions)
 

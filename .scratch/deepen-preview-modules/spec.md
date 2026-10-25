@@ -1,6 +1,6 @@
 # Spec: Deepen the preview's modules around Version, Diagram and edits
 
-Status: ready-for-agent
+Status: done
 
 ## Problem Statement
 

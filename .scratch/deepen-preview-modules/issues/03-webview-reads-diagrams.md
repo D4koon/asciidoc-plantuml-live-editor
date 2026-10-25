@@ -1,6 +1,6 @@
 # 03: Webview switches to Diagrams (contract)
 
-Status: ready-for-agent
+Status: done
 
 Spec: `.scratch/deepen-preview-modules/spec.md` (Diagram module)
 

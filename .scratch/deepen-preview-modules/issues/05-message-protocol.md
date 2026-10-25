@@ -1,6 +1,6 @@
 # 05: One message protocol
 
-Status: ready-for-agent
+Status: done
 
 Spec: `.scratch/deepen-preview-modules/spec.md` (Protocol module)
 

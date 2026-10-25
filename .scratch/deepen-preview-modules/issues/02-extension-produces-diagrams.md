@@ -1,6 +1,6 @@
 # 02: Extension produces Diagrams with Origins (expand)
 
-Status: ready-for-agent
+Status: done
 
 Spec: `.scratch/deepen-preview-modules/spec.md` (Diagram module, Testing Decisions)
 
@@ -15,7 +15,7 @@ This is the "expand" half: the old fields are still sent, so the webview keeps w
 - [x] Lines the engine added have their real text and no Origin
 - [x] Diagram building reads through the Version, so its reads are recorded
 - [x] Tests through an in-memory Version cover: a plain PlantUML file; a PlantUML file with nested includes; an AsciiDoc document with listing blocks and `plantuml::` macros; added `@startuml`/`@enduml` lines; `!include_many` of the same file
-- [ ] The webview still works on the old fields (checked by hand)
+- [x] The webview still works on the old fields (checked by hand) — no longer applies: ticket 03 removed the old fields
 
 ## Notes
 

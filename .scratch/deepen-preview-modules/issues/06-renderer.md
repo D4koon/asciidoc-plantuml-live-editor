@@ -1,6 +1,6 @@
 # 06: Move the renderer out of Preview
 
-Status: ready-for-agent
+Status: done
 
 Spec: `.scratch/deepen-preview-modules/spec.md` (Renderer module, Testing Decisions)
 

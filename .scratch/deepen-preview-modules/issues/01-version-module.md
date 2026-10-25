@@ -1,6 +1,6 @@
 # 01: Version module, plus Vitest
 
-Status: ready-for-agent
+Status: done
 
 Spec: `.scratch/deepen-preview-modules/spec.md` (Version module, Testing Decisions)
 
