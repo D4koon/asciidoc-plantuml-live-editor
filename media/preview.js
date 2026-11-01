@@ -30,7 +30,7 @@ const splitBtn = /** @type {HTMLButtonElement} */ (document.getElementById('spli
 const state = vscode.getState() ?? {};
 let zoom = state.zoom ?? 1;
 
-function saveState(patch) {
+function saveState(/** @type {Partial<typeof state>} */ patch) {
   Object.assign(state, patch);
   vscode.setState(state);
 }
@@ -66,7 +66,7 @@ async function loadEngine() {
 }
 
 /** Renders one diagram source to SVG markup. */
-function renderOne(source, dark) {
+function renderOne(/** @type {string} */ source, /** @type {boolean} */ dark) {
   return new Promise((resolve, reject) => {
     try {
       renderToString(source.split(/\r\n|\r|\n/), resolve, reject, { dark });
@@ -92,7 +92,7 @@ function target(/** @type {HTMLElement} */ el, /** @type {Diagram} */ diagram) {
   return { el, source: diagram.lines.join('\n'), error: diagram.error };
 }
 
-function isDark(theme) {
+function isDark(/** @type {import('../src/protocol').UpdateMessage['theme']} */ theme) {
   if (theme === 'dark') return true;
   if (theme === 'light') return false;
   const cls = document.body.classList;
@@ -273,7 +273,7 @@ function applyZoom() {
   saveState({ zoom });
 }
 
-function setZoom(value) {
+function setZoom(/** @type {number} */ value) {
   zoom = Math.min(8, Math.max(0.1, value));
   applyZoom();
 }
@@ -474,12 +474,12 @@ function themeClass() {
 
 // ---------------------------------------------------------------- utils ---
 
-function setStatus(text, isError = false) {
+function setStatus(/** @type {string} */ text, isError = false) {
   statusEl.textContent = text;
   statusEl.classList.toggle('error', isError);
 }
 
-function errorText(e) {
+function errorText(/** @type {unknown} */ e) {
   if (e instanceof Error) return e.message;
   return String(e);
 }

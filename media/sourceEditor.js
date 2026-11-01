@@ -3,11 +3,16 @@
 // VS Code document: local edits are reported through `onEdit`, and text
 // coming from VS Code is applied as a minimal edit so the cursor stays put.
 
-/** @type {Promise<any> | undefined} */
+/**
+ * Monaco's API; it ships no types for its AMD build.
+ * @typedef {any} Monaco
+ */
+
+/** @type {Promise<Monaco> | undefined} */
 let monacoPromise;
 
 /** Loads Monaco's AMD build from `base` (a URL ending in "/"). */
-function loadMonaco(base) {
+function loadMonaco(/** @type {string} */ base) {
   monacoPromise ??= new Promise((resolve, reject) => {
     const workerMain = `${base}vs/base/worker/workerMain.js`;
     // Workers can't be created from webview resource URLs, so bootstrap one from a blob.
@@ -127,13 +132,18 @@ export async function createSourceEditor(container, { base, text, eol, language,
   };
 }
 
+/**
+ * @param {Monaco} monaco
+ * @param {any} model a Monaco text model
+ * @param {string} eol
+ */
 function setEol(monaco, model, eol) {
   const wanted = eol === '\r\n' ? monaco.editor.EndOfLineSequence.CRLF : monaco.editor.EndOfLineSequence.LF;
   if (model.getEndOfLineSequence() !== wanted) model.setEOL(wanted);
 }
 
 /** Builds a Monaco theme from the VS Code theme colours exposed to the webview. */
-function applyTheme(monaco) {
+function applyTheme(/** @type {Monaco} */ monaco) {
   const cls = document.body.classList;
   const base = cls.contains('vscode-high-contrast-light')
     ? 'hc-light'
@@ -167,7 +177,7 @@ let registered = false;
 let asciiDocRegistered = false;
 
 /** Registers a Monarch tokenizer for AsciiDoc: structure and inline markup, not a full parser. */
-function registerAsciiDoc(monaco) {
+function registerAsciiDoc(/** @type {Monaco} */ monaco) {
   if (asciiDocRegistered) return;
   asciiDocRegistered = true;
   monaco.languages.register({ id: 'asciidoc' });
@@ -233,7 +243,7 @@ function registerAsciiDoc(monaco) {
 }
 
 /** Registers a Monarch tokenizer for PlantUML (mirrors syntaxes/plantuml.tmLanguage.json). */
-function registerPlantUml(monaco) {
+function registerPlantUml(/** @type {Monaco} */ monaco) {
   if (registered) return;
   registered = true;
   monaco.languages.register({ id: 'plantuml' });

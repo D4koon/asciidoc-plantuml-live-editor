@@ -9,6 +9,7 @@
  * @typedef {import('../src/protocol').Navigation} Navigation
  */
 
+/** @type {Partial<Record<IncludeNode['status'], string>>} */
 const STATUS_TEXT = {
   missing: 'not found',
   recursive: 'recursive, skipped',
@@ -36,7 +37,7 @@ export function setupIncludeOverview({ panel, tree, crumbs, post, open, onToggle
 
   const onClick = (/** @type {MouseEvent} */ e) => {
     const target = /** @type {Element} */ (e.target).closest('[data-uri]');
-    if (!(target instanceof HTMLElement)) return;
+    if (!(target instanceof HTMLElement) || !target.dataset.uri) return;
     const line = target.dataset.line;
     post({ type: 'show', uri: target.dataset.uri, line: line === undefined ? undefined : Number(line) });
   };
