@@ -10,8 +10,8 @@
 //      ├─ chapters/sections/components.adoc   ([plantuml] with !include ../../../shared/styles.iuml)
 //      └─ plantuml::../model/domain.puml[]     (order.iuml -> customer.iuml -> styles.iuml -> colors.iuml)
 //
-// Diagrams from included files are read-only in the preview; the one at the
-// end of this file can be edited there.
+// Everything can be edited in the preview, also the chapters and diagrams of
+// included files: each change goes to the file it came from.
 
 include::chapters/01-introduction.adoc[]
 
@@ -19,13 +19,14 @@ include::chapters/02-architecture.adoc[]
 
 == Checkout
 
-This diagram is written in this file, so you can click, rename and delete
-in the preview. Its participants come from `shared/actors.iuml`, which
-includes `styles.iuml`, which includes `colors.iuml`.
+This diagram is written in this file. Its participants come from
+`shared/actors.iuml`, which includes `styles.iuml`, which includes
+`colors.iuml`. Renaming a participant in the preview changes
+`actors.iuml`; renaming a message changes this file.
 Change1
 
 [#checkout-flow]
-.Checkout (editable)
+.Checkout flow
 [plantuml]
 ----
 @startuml

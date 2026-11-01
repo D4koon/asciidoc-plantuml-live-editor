@@ -23,7 +23,7 @@ includes it.
 | File | What it exercises |
 |------|-------------------|
 | `document.adoc` | Diagram blocks, a titled diagram, `plantuml::` macro |
-| `docs/manual.adoc` | `include::` chains: chapters → sections and snippets. Diagrams in included files (read-only), a `plantuml::` macro whose `.puml` has its own include chain, and an editable diagram in the manual itself |
+| `docs/manual.adoc` | `include::` chains: chapters → sections and snippets. Diagrams in included chapters, a `plantuml::` macro whose `.puml` has its own include chain, and a diagram in the manual itself whose participants come from `shared/actors.iuml`. All of them can be edited in the preview |
 
 ```
 docs/manual.adoc
