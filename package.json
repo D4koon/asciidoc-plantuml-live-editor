@@ -2,7 +2,7 @@
   "name": "asciidoc-plantuml-live-editor",
   "displayName": "AsciiDoc & PlantUML Live Editor",
   "description": "Live preview and visual editing of AsciiDoc documents and PlantUML diagrams, rendered entirely inside VS Code (no Java, no Graphviz, no server).",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "publisher": "baam",
   "license": "MIT",
   "repository": {
