@@ -1,0 +1,6 @@
+{
+  // The Extension Development Host opens this folder; the repository is the
+  // project one level up. Opening it lets source control show diffs of the
+  // examples, to try the preview's diff view.
+  "git.openRepositoryInParentFolders": "always"
+}
