@@ -180,4 +180,5 @@ The user sees the same features, with consistent edit behaviour and reliable re-
 
 - There are no ADRs. None of these decisions is hard to reverse, surprising, or the result of a real trade-off.
 - The glossary (Version, Origin, Diagram) was created during the design discussion, and should be updated if a step sharpens any term.
+- After the steps shipped, two decisions here were reversed. The webview scripts are now tested: `test/webview/` drives the real preview page in Chromium (Playwright), against the real renderer and edit planning. For that, the HTML template moved out of `Preview` into its own module without VS Code, so the tests load the same page and Content-Security-Policy.
 - A standards review of the same code found the duplication this spec removes. The remaining standards findings (unclear navigation-state names, small pass-through methods) can be fixed opportunistically as steps touch that code.

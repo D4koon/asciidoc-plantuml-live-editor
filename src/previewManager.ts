@@ -4,6 +4,7 @@ import { ElementRef, LineEdit, locateLine, planDelete, planRename } from './diag
 import { isAsciiDoc } from './asciidoc';
 import { Diagram } from './diagrams';
 import { editBlock, editDiagram, Outcome } from './sourceEdits';
+import { previewHtml } from './previewHtml';
 import { Render, render, RenderSettings, rendersAlone } from './renderer';
 import { fileKey, filePathOf, isReadOnly, Version } from './versions';
 import { applyFileEdits, workspaceVersion } from './vscodeWorkspace';
@@ -454,69 +455,17 @@ class Preview implements vscode.Disposable, DiffSide {
   }
 
   private getHtml(webview: vscode.Webview): string {
-    const media = (...parts: string[]) =>
-      webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'media', ...parts));
-    const nonce = createNonce();
-    const csp = [
-      `default-src 'none'`,
-      `img-src ${webview.cspSource} data: https:`,
-      `style-src ${webview.cspSource} 'unsafe-inline'`,
-      `font-src ${webview.cspSource} data:`,
-      // Viz.js compiles Graphviz from an embedded WebAssembly module.
-      `script-src 'nonce-${nonce}' ${webview.cspSource} 'wasm-unsafe-eval'`,
-      // Monaco's language worker is bootstrapped from a blob URL.
-      `worker-src blob:`,
-    ].join('; ');
-    const split = this.globalState.get<boolean>(SPLIT_STATE_KEY, false);
-    // Relative image paths in AsciiDoc resolve against the document's folder.
-    const base =
-      this.format === 'asciidoc' ? `\n  <base href="${webview.asWebviewUri(this.folder())}/">` : '';
-
-    return /* html */ `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="${csp}">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">${base}
-  <link rel="stylesheet" href="${media('preview.css')}">
-  <link rel="stylesheet" href="${media('asciidoc.css')}">
-  <title>PlantUML Preview</title>
-</head>
-<body
-  data-format="${this.format}"
-  data-kind="${this.kind}"
-  data-split="${split}"
-  data-readonly="${this.readOnly}"
-  data-engine="${media('vendor', 'plantuml.js')}"
-  data-vendor="${media('vendor')}/"
-  data-monaco="${media('monaco')}/">
-  <div id="toolbar">
-    <button id="split-toggle" title="Edit the source in this tab">Split</button>
-    <button id="zoom-out" title="Zoom out">−</button>
-    <button id="zoom-reset" title="Reset zoom">100%</button>
-    <button id="zoom-in" title="Zoom in">+</button>
-    <button id="zoom-fit" title="Fit to width">Fit</button>
-    <span id="crumbs"></span>
-    <span id="diff-nav" hidden>
-      <button class="pv-diff-prev" title="Previous change (Shift+F7)">↑</button>
-      <span class="pv-diff-count"></span>
-      <button class="pv-diff-next" title="Next change (F7)">↓</button>
-    </span>
-    <span id="status">Loading PlantUML engine…</span>
-    <button id="edit-source" title="Open the source in the VS Code text editor beside this tab">Edit Source</button>
-  </div>
-  <div id="main">
-    <div id="source">
-      <div id="source-editor"></div>
-      <details id="includes" open><summary>Includes</summary><div id="include-tree"></div></details>
-    </div>
-    <div id="divider" title="Drag to resize"></div>
-    <div id="diagrams"></div>
-  </div>
-  <script nonce="${nonce}" src="${media('vendor', 'viz-global.js')}"></script>
-  <script nonce="${nonce}" type="module" src="${media('preview.js')}"></script>
-</body>
-</html>`;
+    return previewHtml({
+      media: (...parts) => webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'media', ...parts)).toString(),
+      cspSource: webview.cspSource,
+      nonce: createNonce(),
+      // Relative image paths in AsciiDoc resolve against the document's folder.
+      base: this.format === 'asciidoc' ? `${webview.asWebviewUri(this.folder())}/` : undefined,
+      format: this.format,
+      kind: this.kind,
+      split: this.globalState.get<boolean>(SPLIT_STATE_KEY, false),
+      readOnly: this.readOnly,
+    });
   }
 
   dispose(): void {

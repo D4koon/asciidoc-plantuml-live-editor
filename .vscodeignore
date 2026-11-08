@@ -18,3 +18,4 @@ test/**
 vitest.config.mts
 docs/**
 .scratch/**
+test-results/**

@@ -294,6 +294,7 @@
     "@vscode/vsce": "^3.2.1",
     "fflate": "^0.8.2",
     "monaco-editor": "^0.52.2",
+    "playwright": "^1.65.1",
     "typescript": "^5.4.0",
     "vitest": "^4.1.12",
     "vscode-uri": "^3.2.0"

@@ -202,6 +202,16 @@ Press <kbd>F5</kbd> in VS Code to start an Extension Development Host with the
 `examples/` folder open; this runs `build` first. Run `npm run package` to build
 a `.vsix`. The `.vsix` is about 30 MB, mostly the standard library bundles.
 
+```sh
+npx playwright install chromium   # once: the browser the webview tests run in
+npm test                          # needs `npm run build` first, for the engine
+npm run typecheck
+```
+
+The tests in `test/webview/` open the preview page in Chromium with the real
+engine, click and type in it, and check what it sends to the extension. Their
+screenshots go to `test-results/webview/`.
+
 ## Notes and limitations
 
 - js-plantuml is marked **beta** upstream, so a few diagram types or features

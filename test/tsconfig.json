@@ -4,7 +4,9 @@
     "rootDir": "..",
     "noEmit": true,
     "module": "esnext",
-    "moduleResolution": "bundler"
+    "moduleResolution": "bundler",
+    // The webview tests also run code in the page.
+    "lib": ["ES2022", "DOM", "DOM.Iterable"]
   },
   "include": ["../src", "."]
 }

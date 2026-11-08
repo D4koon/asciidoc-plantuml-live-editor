@@ -2,8 +2,9 @@ import * as vscode from 'vscode';
 import { describe, expect, it } from 'vitest';
 import { LineEdit, planDelete, planRename } from '../src/diagramEdits';
 import { Diagram } from '../src/diagrams';
-import { editBlock, editDiagram, FileEdit, Outcome } from '../src/sourceEdits';
+import { editBlock, editDiagram } from '../src/sourceEdits';
 import { Version } from '../src/versions';
+import { applied } from './applied';
 import { disk, MemoryWorkspace, origin } from './memoryWorkspace';
 
 const MAIN = disk('/project/main.puml');
@@ -15,23 +16,6 @@ function diagramOf(files: Map<vscode.Uri, string>, lines: ([vscode.Uri, number] 
     lines: lines.map((l) => (typeof l === 'string' ? l : textOf(...l))),
     origins: lines.map((l) => (typeof l === 'string' ? null : origin(...l))),
   };
-}
-
-/** The files' texts after applying `outcome`'s edits. */
-function applied(files: Map<vscode.Uri, string>, outcome: Outcome): Map<string, string> {
-  if (!outcome.ok) throw new Error(`refused: ${outcome.reason}`);
-  const result = new Map([...files].map(([uri, text]) => [uri.toString(), text]));
-  const offset = (text: string, { line, character }: FileEdit['start']) => {
-    const lines = text.split(/(?<=\n)/);
-    return lines.slice(0, line).reduce((sum, l) => sum + l.length, 0) + character;
-  };
-  // Back to front, so earlier offsets stay valid.
-  const edits = [...outcome.edits].sort((a, b) => b.start.line - a.start.line || b.start.character - a.start.character);
-  for (const edit of edits) {
-    const text = result.get(edit.uri)!;
-    result.set(edit.uri, text.slice(0, offset(text, edit.start)) + edit.text + text.slice(offset(text, edit.end)));
-  }
-  return result;
 }
 
 function workspaceOf(files: Map<vscode.Uri, string>): MemoryWorkspace {
