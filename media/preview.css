@@ -15,6 +15,15 @@ body {
   overflow: hidden;
 }
 
+/*
+ * The new side of a diff is on the right. VS Code draws no visible line
+ * between the two previews, so the preview draws one.
+ */
+body.pv-diff-new {
+  border-left: 1px solid
+    var(--vscode-sideBySideEditor-verticalBorder, var(--vscode-editorGroup-border, rgba(128, 128, 128, 0.35)));
+}
+
 #toolbar {
   flex: none;
   display: flex;

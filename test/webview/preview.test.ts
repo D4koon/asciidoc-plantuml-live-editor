@@ -230,6 +230,10 @@ describe('A diff of two versions', () => {
         await expect.poll(() => side.page.locator('g.participant-head.pv-diff[data-qualified-name="Alice"]').count()).toBe(0);
         await expect.poll(() => side.page.locator('#diff-nav').isVisible()).toBe(true);
       }
+      // A line separates the two sides: the new (right) side draws it.
+      const borderOf = (side: Webview) => side.page.evaluate(() => getComputedStyle(document.body).borderLeftWidth);
+      expect(await borderOf(oldView)).toBe('0px');
+      expect(await borderOf(view)).toBe('1px');
       await oldView.screenshot('diff-old');
       await view.screenshot('diff-new');
       expect(oldView.errors).toEqual([]);
