@@ -247,7 +247,7 @@ const diffView = setupDiffView({
     return [...diagramsEl.querySelectorAll('.adoc [data-src]')].flatMap((node) => {
       const el = /** @type {HTMLElement} */ (node);
       const block = renderedBlocks[Number(el.dataset.src)];
-      return block ? [{ el, uri: block.uri ?? rendered, start: block.start, end: block.end }] : [];
+      return block ? [{ el, uri: block.uri ?? rendered, start: block.start, end: block.end, text: block.text }] : [];
     });
   },
 });

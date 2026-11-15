@@ -21,7 +21,7 @@ const MARKS = ['pv-diff', 'pv-diff-diagram', 'pv-diff-block', 'pv-diff-gap-befor
  *   nav: HTMLElement,
  *   post: PostToExtension,
  *   diagram: (diagramEl: HTMLElement) => Diagram | undefined,
- *   blocks: () => { el: HTMLElement, uri: string, start: number, end: number }[],
+ *   blocks: () => { el: HTMLElement, uri: string, start: number, end: number, text: string }[],
  * }} options
  */
 export function setupDiffView({ container, nav, post, diagram: diagramAt, blocks }) {
@@ -45,6 +45,11 @@ export function setupDiffView({ container, nav, post, diagram: diagramAt, blocks
   });
 
   function clear() {
+    for (const mark of [...container.querySelectorAll('mark.pv-diff-word')]) {
+      const parent = mark.parentNode;
+      mark.replaceWith(...mark.childNodes);
+      parent?.normalize();
+    }
     for (const cls of MARKS) {
       for (const el of [...container.querySelectorAll(`.${cls}`)]) el.classList.remove(cls);
     }
@@ -66,7 +71,10 @@ export function setupDiffView({ container, nav, post, diagram: diagramAt, blocks
     const gaps = new Map();
     /** @type {Map<string, Set<number>>} lines whose paragraph lost or gained lines */
     const touched = new Map();
+    /** @type {Map<string, Record<number, [number, number][]>>} */
+    const words = new Map();
     for (const [uri, f] of Object.entries(diff.files)) {
+      words.set(uri, f.words ?? {});
       changed.set(uri, new Map(f.changed.map((line, i) => [line, f.ends[i] ?? line])));
       gaps.set(uri, new Set(f.gaps));
       touched.set(uri, new Set(f.touched ?? []));
@@ -86,7 +94,7 @@ export function setupDiffView({ container, nav, post, diagram: diagramAt, blocks
       if (region) regions.push(region);
       if (markDiagram(diagramEl, diagram, isChanged, gaps, shown)) diagramEl.classList.add('pv-diff-diagram');
     }
-    for (const { el, uri, start, end } of blocks()) {
+    for (const { el, uri, start, end, text } of blocks()) {
       const region = { box: el, mark: el, uri, start, end, has: (/** @type {string} */ u, /** @type {number} */ l) => u === uri && l >= start && l <= end };
       regions.push(region);
       let hit = false;
@@ -98,7 +106,10 @@ export function setupDiffView({ container, nav, post, diagram: diagramAt, blocks
         // Lines removed or added on the other side, within the block or its paragraph.
         if ((line > start && gaps.get(uri)?.has(line)) || touched.get(uri)?.has(line)) hit = true;
       }
-      if (hit) el.classList.add('pv-diff-block');
+      if (hit) {
+        el.classList.add('pv-diff-block');
+        markWords(el, text, start, words.get(uri));
+      }
     }
 
     // Changed lines that render as nothing of their own (a block title, block
@@ -301,4 +312,54 @@ function markDiagram(diagramEl, { lines, origins }, isChanged, gaps, shown) {
     }
   }
   return true;
+}
+
+const WORD_CHAR = String.raw`[\p{L}\p{N}_]`;
+
+/** A pattern for `word` standing alone (not part of a longer word). */
+function wholeWord(/** @type {string} */ word) {
+  return new RegExp(`(?<!${WORD_CHAR})${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?!${WORD_CHAR})`, 'gu');
+}
+
+/**
+ * Marks the changed words of a block, given as columns of its source lines.
+ * The rendering has no columns, so a word is found by which occurrence of it
+ * it is in the block's source: markup around it (`code`, *bold*) is skipped.
+ * @param {HTMLElement} el the rendered block
+ * @param {string} text the block's source lines
+ * @param {number} start the line `text` starts at
+ * @param {Record<number, [number, number][]> | undefined} words by line
+ */
+function markWords(el, text, start, words) {
+  if (!words) return;
+  const lines = text.split('\n');
+  /** @type {{ word: string, occurrence: number }[]} */
+  const wanted = [];
+  lines.forEach((line, i) => {
+    for (const [from, to] of words[start + i] ?? []) {
+      const word = line.slice(from, to);
+      const before = [...lines.slice(0, i), line.slice(0, from)].join('\n');
+      wanted.push({ word, occurrence: [...before.matchAll(wholeWord(word))].length });
+    }
+  });
+  // Last first, so splitting text nodes doesn't move the occurrences still to mark.
+  for (const { word, occurrence } of wanted.reverse()) markOccurrence(el, word, occurrence);
+}
+
+/** Wraps the `occurrence`-th (zero-based) standalone `word` in the text of `el` in a mark. */
+function markOccurrence(/** @type {HTMLElement} */ el, /** @type {string} */ word, /** @type {number} */ occurrence) {
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  let seen = 0;
+  for (let node = /** @type {Text | null} */ (walker.nextNode()); node; node = /** @type {Text | null} */ (walker.nextNode())) {
+    for (const match of node.data.matchAll(wholeWord(word))) {
+      if (seen++ < occurrence) continue;
+      const found = node.splitText(match.index);
+      found.splitText(word.length);
+      const mark = document.createElement('mark');
+      mark.className = 'pv-diff-word';
+      found.replaceWith(mark);
+      mark.append(found);
+      return;
+    }
+  }
 }

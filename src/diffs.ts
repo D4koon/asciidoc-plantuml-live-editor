@@ -238,6 +238,8 @@ export function diffLines(a: string[], b: string[]): [FileChanges, FileChanges] 
   const gapsB: number[] = [];
   const touchedA: number[] = [];
   const touchedB: number[] = [];
+  const wordsA: Record<number, [number, number][]> = {};
+  const wordsB: Record<number, [number, number][]> = {};
   const text = (lines: string[], i: number) => !!lines[i]?.trim();
 
   let start = 0;
@@ -253,6 +255,13 @@ export function diffLines(a: string[], b: string[]): [FileChanges, FileChanges] 
 
   /** Records a hunk: lines [i0, i1) of `a` replaced by [j0, j1) of `b`. */
   const hunk = (i0: number, i1: number, j0: number, j1: number) => {
+    // Lines replaced by lines: the k-th of each side are taken for versions of each other.
+    for (let k = 0; k < Math.min(i1 - i0, j1 - j0); k++) {
+      const words = changedWords(a[i0 + k], b[j0 + k]);
+      if (!words) continue;
+      if (words[0].length) wordsA[i0 + k] = words[0];
+      if (words[1].length) wordsB[j0 + k] = words[1];
+    }
     for (let i = i0; i < i1; i++) changedA.push(i);
     for (let j = j0; j < j1; j++) changedB.push(j);
     if (i0 === i1 && j1 > j0) {
@@ -302,14 +311,60 @@ export function diffLines(a: string[], b: string[]): [FileChanges, FileChanges] 
       if (hi < n || hj < m) hunk(start + hi, endA, start + hj, endB);
     }
   }
-  return [withEnds(changedA, gapsA, touchedA, a), withEnds(changedB, gapsB, touchedB, b)];
+  return [withEnds(changedA, gapsA, touchedA, wordsA, a), withEnds(changedB, gapsB, touchedB, wordsB, b)];
 }
 
-function withEnds(changed: number[], gaps: number[], touched: number[], lines: string[]): FileChanges {
+function withEnds(
+  changed: number[],
+  gaps: number[],
+  touched: number[],
+  words: FileChanges['words'],
+  lines: string[]
+): FileChanges {
   const ends = changed.map((line) => {
     let end = line;
     while (lines[end]?.trim() && end + 1 < lines.length && lines[end + 1].trim()) end++;
     return end;
   });
-  return { changed, ends, gaps, touched };
+  return { changed, ends, gaps, touched, words };
+}
+
+const TOKEN = /[\p{L}\p{N}_]+|[^\s\p{L}\p{N}_]/gu;
+const WORD = /^[\p{L}\p{N}_]/u;
+
+/**
+ * The words that differ between two versions of a line, as [start, end)
+ * columns on each side; undefined when the lines share less than half their
+ * words (rewritten rather than edited, so marking words would show noise).
+ */
+export function changedWords(a: string, b: string): [[number, number][], [number, number][]] | undefined {
+  const tokensA = [...a.matchAll(TOKEN)];
+  const tokensB = [...b.matchAll(TOKEN)];
+  const n = tokensA.length;
+  const m = tokensB.length;
+  const width = m + 1;
+  const lcs = new Uint16Array((n + 1) * width);
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      lcs[i * width + j] =
+        tokensA[i][0] === tokensB[j][0] ? lcs[(i + 1) * width + j + 1] + 1 : Math.max(lcs[(i + 1) * width + j], lcs[i * width + j + 1]);
+    }
+  }
+  if (lcs[0] * 2 < Math.max(n, m)) return undefined;
+  const keptA = new Set<number>();
+  const keptB = new Set<number>();
+  for (let i = 0, j = 0; i < n && j < m; ) {
+    if (tokensA[i][0] === tokensB[j][0]) {
+      keptA.add(i++);
+      keptB.add(j++);
+    } else if (lcs[(i + 1) * width + j] >= lcs[i * width + j + 1]) {
+      i++;
+    } else {
+      j++;
+    }
+  }
+  // Only words are marked: punctuation alone is hard to see, and to find in the rendering.
+  const ranges = (tokens: RegExpExecArray[], kept: Set<number>): [number, number][] =>
+    tokens.flatMap((t, i) => (kept.has(i) || !WORD.test(t[0]) ? [] : [[t.index, t.index + t[0].length] as [number, number]]));
+  return [ranges(tokensA, keptA), ranges(tokensB, keptB)];
 }

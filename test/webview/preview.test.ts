@@ -203,6 +203,37 @@ describe('The preview of an AsciiDoc document', () => {
 });
 
 describe('A diff of two versions', () => {
+  it('marks the words that changed within a changed paragraph', async () => {
+    const before = disk('/project/old.adoc');
+    const text = (word: string) =>
+      ['= Checkout', '', 'Renaming a participant in the preview changes `actors.iuml`;', `renaming a message ${word} this file.`].join('\n');
+    const memory = new MemoryWorkspace().file(before, text('changes')).file(DOC, text('changers'));
+    const lines = async (uri: vscode.Uri) => (await new Version(memory).text(uri)).split('\n');
+    const [oldChanges, newChanges] = diffLines(await lines(before), await lines(DOC));
+
+    const oldView = await harness.open({ format: 'asciidoc', readOnly: true });
+    const newView = (view = await harness.open({ format: 'asciidoc' }));
+    try {
+      await show(oldView, before, new Version(memory), 0);
+      await show(view, DOC, new Version(memory), 0);
+      await oldView.send({ type: 'diff', side: 'old', files: { [before.toString()]: oldChanges } });
+      await view.send({ type: 'diff', side: 'new', files: { [DOC.toString()]: newChanges } });
+
+      // The second "changes" of the paragraph is the one that changed.
+      const marked = (side: Webview) =>
+        side.page.evaluate(() =>
+          [...document.querySelectorAll('.pv-diff-block mark.pv-diff-word')].map((m) => `${m.textContent}|${m.nextSibling?.textContent}`)
+        );
+      await expect.poll(() => marked(oldView)).toEqual(['changes| this file.']);
+      await expect.poll(() => marked(newView)).toEqual(['changers| this file.']);
+      await oldView.screenshot('diff-words-old');
+      await view.screenshot('diff-words-new');
+      expect(oldView.errors).toEqual([]);
+    } finally {
+      await oldView.close();
+    }
+  });
+
   it('marks what changed on each side, also in an included file', async () => {
     const old = { main: git('/project/main.puml', 'HEAD'), actors: git('/project/actors.iuml', 'HEAD') };
     const memory = new MemoryWorkspace()

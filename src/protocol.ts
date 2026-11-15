@@ -80,6 +80,8 @@ export interface FileChanges {
    * paragraph lost its last line): the paragraph changed, though they didn't.
    */
   touched: number[];
+  /** For changed lines edited rather than rewritten: the [start, end) columns of the words that changed. */
+  words: Record<number, [number, number][]>;
 }
 
 /** What a preview needs to show the changes of its side. */
