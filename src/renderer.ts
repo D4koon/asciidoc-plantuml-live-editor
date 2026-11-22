@@ -46,13 +46,14 @@ async function asciidoc(text: string, document: vscode.Uri, version: Version, se
   } catch (e) {
     result = {
       html: `<div class="pv-adoc-error">AsciiDoc conversion failed: ${escapeHtml(String(e))}</div>`,
+      warnings: [],
       diagrams: [],
       blocks: [],
       includes: [],
     };
   }
-  const { html, diagrams, blocks, titleBlock, includes } = result;
-  return { format: 'asciidoc', diagrams, asciidoc: { html, blocks, titleBlock }, includes };
+  const { html, warnings, diagrams, blocks, titleBlock, includes } = result;
+  return { format: 'asciidoc', diagrams, asciidoc: { html, blocks, titleBlock, warnings }, includes };
 }
 
 async function plantuml(text: string, document: vscode.Uri, version: Version, settings: RenderSettings): Promise<Rendered> {

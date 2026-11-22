@@ -80,7 +80,6 @@ download again.
     <kbd>Ctrl</kbd>+<kbd>S</kbd> saves the file shown in the editor. Unsaved
     files get a dot in the overview. If you close the tab with unsaved
     included files that aren't open elsewhere, you are offered to save them.
-    AsciiDoc includes using `lines=` or `tag=` show the saved text.
 
   Entries that were not used are marked: *not found*,
   *already included* (`!include_once`), *recursive*, or *outside the document
@@ -125,6 +124,12 @@ download again.
   - Block titles (`.Title`) and IDs work, so `<<id>>` cross-references link to diagrams.
   - `include::` works. By default only files inside the document's folder can be
     included; set `asciidocPlantumlLive.asciidoc.safeMode` to `unsafe` to allow other paths.
+    Includes selecting `lines=` or `tags=` take the lines from unsaved edits
+    and, in a diff, from the same git version.
+  - **Warnings**: what Asciidoctor reports (e.g. a tag an include asks for that
+    the file doesn't have) is listed in a collapsed box above the document.
+    A problem with an include's `lines=` or `tags=` also shows in place of
+    the include. Click a warning to go to its line.
   - **Edit the document in the preview**: *click* a block to highlight its
     source line in the split editor and any open text editor. *Double-click* a
     title, heading, paragraph, admonition, list item or code block to edit it

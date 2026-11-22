@@ -2,7 +2,7 @@
 // is also each side of a diff), in both directions. Types only: the webview
 // scripts import them through JSDoc, so both sides check against them.
 
-import type { AsciiDocBlock } from './asciidoc';
+import type { AsciiDocBlock, Warning } from './asciidoc';
 import type { ElementRef, RenameRequest } from './diagramEdits';
 import type { Diagram } from './diagrams';
 import type { IncludeNode } from './includes';
@@ -29,6 +29,8 @@ export interface ConvertedDocument {
   blocks: AsciiDocBlock[];
   /** Index into `blocks` of the document title, if editable. */
   titleBlock?: number;
+  /** What Asciidoctor reported; boxes in `html` (`pv-warning`) refer to them by index (`data-warning`). */
+  warnings: Warning[];
 }
 
 /** What a render produces: the Diagrams of a PlantUML file, or an AsciiDoc document. */

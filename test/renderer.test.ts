@@ -1,3 +1,4 @@
+import * as path from 'path';
 import { describe, expect, it } from 'vitest';
 import type { Uri } from 'vscode';
 import { render, rendersAlone, RenderSettings } from '../src/renderer';
@@ -150,6 +151,7 @@ describe('Rendering an AsciiDoc document', () => {
         html: expect.stringMatching(/<h1>Title<\/h1>[^]*data-diagram="0"[^]*data-diagram="1"[^]*data-diagram="2"/),
         blocks: [{ start: 0, end: 0, text: '= Title', kind: 'line', uri: undefined }],
         titleBlock: 0,
+        warnings: [],
       },
       includes: [
         expect.objectContaining({ directive: 'plantuml::', target: 'diagrams/flow.puml', line: 7, status: 'ok' }),
@@ -225,6 +227,108 @@ describe('Rendering in a Version', () => {
     expect(dependencies.map(String)).toEqual([main, shared].map(String));
   });
 
+  it('selects the lines of an include:: from the unsaved text, and its blocks report the lines they are on', async () => {
+    const chapter = disk('/project/chapter.adoc');
+    const workspace = new MemoryWorkspace()
+      .file(chapter, 'Saved first.\n\nSaved second.')
+      .editor(chapter, ['Skipped.', '', 'Unsaved first.', '', 'Unsaved second.', '', 'Skipped too.'].join('\n'));
+
+    const { update } = await renderText(DOC, ['= Book', '', 'include::chapter.adoc[lines=3..5]'].join('\n'), workspace);
+
+    const { asciidoc } = update as Extract<typeof update, { format: 'asciidoc' }>;
+    expect(paragraphs(asciidoc.html)).toEqual(['Unsaved first.', 'Unsaved second.']);
+    expect(asciidoc.blocks.slice(1)).toEqual([
+      { start: 2, end: 2, text: 'Unsaved first.', kind: 'text', uri: chapter.toString() },
+      { start: 4, end: 4, text: 'Unsaved second.', kind: 'text', uri: chapter.toString() },
+    ]);
+    expect(asciidoc.warnings).toEqual([]);
+  });
+
+  it('selects the tags of an include:: from the unsaved text, and its diagram lines report the lines they are on', async () => {
+    const chapter = disk('/project/chapter.adoc');
+    const workspace = new MemoryWorkspace().file(chapter, 'Saved.').editor(
+      chapter,
+      [
+        '// tag::intro[]',
+        'Intro.', //            1
+        '// end::intro[]',
+        '',
+        'Not this.',
+        '',
+        '// tag::flow[]',
+        '[plantuml]',
+        '----',
+        'A -> B', //            9
+        '// end::flow[]',
+        'Skipped -> Line',
+        '// tag::flow[]',
+        'B -> C', //            13
+        '----',
+        '// end::flow[]',
+      ].join('\n')
+    );
+
+    const { update } = await renderText(DOC, ['= Book', '', 'include::chapter.adoc[tags=intro;flow]'].join('\n'), workspace);
+
+    const { asciidoc, diagrams } = update as Extract<typeof update, { format: 'asciidoc' }>;
+    expect(paragraphs(asciidoc.html)).toEqual(['Intro.']);
+    expect(asciidoc.blocks.slice(1)).toEqual([{ start: 1, end: 1, text: 'Intro.', kind: 'text', uri: chapter.toString() }]);
+    expect(diagrams).toEqual([{ lines: ['@startuml', 'A -> B', 'B -> C', '@enduml'], origins: [null, at(chapter, 9), at(chapter, 13), null] }]);
+    expect(asciidoc.warnings).toEqual([]);
+  });
+
+  it('locates a block that spans lines a selection skipped, but doesn’t offer it for editing', async () => {
+    const chapter = disk('/project/chapter.adoc');
+    const workspace = new MemoryWorkspace().file(chapter, ['First half', 'hidden', 'second half.'].join('\n'));
+
+    const { update } = await renderText(DOC, 'include::chapter.adoc[lines=1;3]', workspace);
+
+    const { asciidoc } = update as Extract<typeof update, { format: 'asciidoc' }>;
+    expect(paragraphs(asciidoc.html)).toEqual(['First half\nsecond half.']);
+    expect(asciidoc.blocks).toEqual([{ start: 0, end: 2, text: 'First half\nhidden\nsecond half.', kind: 'none', uri: chapter.toString() }]);
+  });
+
+  it('selects lines and tags of a git version from the same ref', async () => {
+    const book = git('/project/book.adoc', 'HEAD~1');
+    const chapter = git('/project/chapter.adoc', 'HEAD~1');
+    const workspace = new MemoryWorkspace()
+      .file(book, ['include::chapter.adoc[lines=2]', '', 'include::chapter.adoc[tag=end]'].join('\n'))
+      .file(disk('/project/chapter.adoc'), 'On disk.')
+      .file(chapter, ['Skipped.', 'Line two at HEAD~1.', '', 'tag::end[]', 'Tagged at HEAD~1.', 'end::end[]'].join('\n'));
+
+    const { update } = await render({ document: book }, new Version(workspace), SETTINGS);
+
+    const { asciidoc } = update as Extract<typeof update, { format: 'asciidoc' }>;
+    expect(paragraphs(asciidoc.html)).toEqual(['Line two at HEAD~1.', 'Tagged at HEAD~1.']);
+    expect(asciidoc.blocks.map(({ start, uri }) => ({ start, uri }))).toEqual([
+      { start: 1, uri: chapter.toString() },
+      { start: 4, uri: chapter.toString() },
+    ]);
+  });
+
+  it('reports a tag an include:: asks for that isn’t there, at the directive, with a box in its place', async () => {
+    const chapter = disk('/project/chapter.adoc');
+    const workspace = new MemoryWorkspace().file(chapter, ['// tag::intro[]', 'Intro.', '// end::intro[]'].join('\n'));
+
+    const { update } = await renderText(DOC, ['= Book', '', 'include::chapter.adoc[tags=intro;setup]'].join('\n'), workspace);
+
+    const { asciidoc } = update as Extract<typeof update, { format: 'asciidoc' }>;
+    const file = chapter.fsPath.split(path.sep).join('/');
+    expect(asciidoc.warnings).toEqual([{ severity: 'warning', text: `tag 'setup' not found in include file: ${file}`, uri: DOC.toString(), line: 2 }]);
+    expect(asciidoc.html).toMatch(/<div class="pv-warning" data-warning="0"><\/div>[^]*<p>Intro.<\/p>/);
+    expect(asciidoc.blocks.slice(1)).toEqual([{ start: 1, end: 1, text: 'Intro.', kind: 'text', uri: chapter.toString() }]);
+  });
+
+  it('reports what Asciidoctor finds wrong in selected lines at the line of the file they are on', async () => {
+    const chapter = disk('/project/chapter.adoc');
+    const workspace = new MemoryWorkspace().file(chapter, ['Skipped.', '', '=== Too deep', '', 'Text.'].join('\n'));
+
+    const { update } = await renderText(DOC, ['= Book', '', 'include::chapter.adoc[lines=3..]'].join('\n'), workspace);
+
+    const { asciidoc } = update as Extract<typeof update, { format: 'asciidoc' }>;
+    expect(asciidoc.warnings).toEqual([{ severity: 'warning', text: expect.stringContaining('section title out of sequence'), uri: chapter.toString(), line: 2 }]);
+  });
+
   it('lists the includes of the root when rendering another file of its include tree', async () => {
     const page = disk('/project/page.puml');
     const workspace = new MemoryWorkspace()
@@ -262,3 +366,8 @@ describe('Whether a file renders on its own', () => {
     expect(await rendersAlone(DOC, version)).toBe(true);
   });
 });
+
+/** The text of each paragraph of converted HTML. */
+function paragraphs(html: string): string[] {
+  return [...html.matchAll(/<p>([^]*?)<\/p>/g)].map((m) => m[1]);
+}

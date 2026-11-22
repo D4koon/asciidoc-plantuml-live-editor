@@ -15,3 +15,7 @@ _Avoid_: line map, line origin, source position, at
 **Diagram**:
 One PlantUML diagram as the engine saw it, taken out of a document: its lines with includes expanded, and each line's Origin.
 _Avoid_: expanded diagram, embedded diagram, diagram lines
+
+**Warning**:
+A problem Asciidoctor reports while rendering a document from a Version, such as a tag an include asks for that the included file doesn't have. It names the file and line it concerns.
+_Avoid_: diagnostic, log message, error (unless it is one)

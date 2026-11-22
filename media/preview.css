@@ -333,6 +333,65 @@ body.resizing {
   display: none;
 }
 
+/* ---- What Asciidoctor reported ----------------------------------------- */
+
+.pv-warnings {
+  margin: 0 0 12px;
+  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+  border-radius: 2px;
+  font-size: 12px;
+}
+
+.pv-warnings > summary {
+  padding: 4px 8px;
+  color: var(--vscode-editorWarning-foreground, #cca700);
+  cursor: pointer;
+  user-select: none;
+}
+
+.pv-warnings > .pv-warning-item {
+  padding: 2px 8px;
+}
+
+.pv-warning-item {
+  font-family: var(--vscode-editor-font-family);
+  white-space: pre-wrap;
+}
+
+.pv-warning-item.pv-warning-located {
+  cursor: pointer;
+}
+
+.pv-warnings > .pv-warning-located:hover {
+  background: var(--vscode-list-hoverBackground, rgba(128, 128, 128, 0.15));
+}
+
+.pv-warning-where {
+  color: var(--vscode-textLink-foreground);
+}
+
+.pv-warnings > .pv-warning-error {
+  color: var(--vscode-errorForeground);
+}
+
+/* In place of an include:: that went wrong, like a diagram that can't be drawn. */
+.adoc .pv-warning {
+  margin: 0 0 12px;
+  padding: 8px;
+  border-radius: 4px;
+  color: var(--vscode-editor-foreground);
+}
+
+.adoc .pv-warning-warning {
+  background: var(--vscode-inputValidation-warningBackground, rgba(204, 167, 0, 0.2));
+  border: 1px solid var(--vscode-inputValidation-warningBorder, #cca700);
+}
+
+.adoc .pv-warning-error {
+  background: var(--vscode-inputValidation-errorBackground);
+  border: 1px solid var(--vscode-inputValidation-errorBorder);
+}
+
 /* ---- Diffs: what changed on this side ---------------------------------- */
 /* The left side shows what was removed or changed (red), the right side what
    was added or changed (green). Markers in the other side's color show where

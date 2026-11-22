@@ -2,6 +2,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { Diagram, Origin } from './diagrams';
 import { IncludeNode, resolveIncludes } from './includes';
+import { selectFrom } from './includeSelection';
 import { fileKey, filePathOf, samePath, uriInVersion, Version } from './versions';
 
 // Asciidoctor.js 4 ships its own CommonJS build; its types target ESM resolution.
@@ -11,6 +12,16 @@ const asciidoctor: AsciidoctorModule = require('@asciidoctor/core');
 interface AsciidoctorModule {
   load(input: string, options: object): Promise<AsciidoctorNode & { convert(): Promise<string> }>;
   Extensions: { create(): Registry };
+  MemoryLogger: new () => MemoryLogger;
+}
+/** Collects what Asciidoctor logs while loading and converting a document. */
+interface MemoryLogger {
+  getMessages(): { getSeverity(): string; getText(): string; getSourceLocation(): SourceLocation | undefined }[];
+  warn(message: { text: string; source_location: SourceLocation }): void;
+}
+interface SourceLocation {
+  getFile(): string | undefined | null;
+  getLineNumber(): number | undefined;
 }
 interface AsciidoctorNode {
   context: string;
@@ -31,14 +42,20 @@ interface Registry {
   includeProcessor(fn: (this: IncludeDsl) => void): void;
 }
 interface IncludeDsl {
-  handles(fn: (doc: { reader?: PreprocessorReader }, target: string) => boolean): void;
+  handles(fn: (doc: { reader?: PreprocessorReader; getAttribute(name: string): unknown }, target: string) => boolean): void;
   process(fn: (doc: unknown, reader: PreprocessorReader, target: string, attrs: Record<string, unknown>) => void): void;
 }
-/** Internals read to find the directive being processed: `_dir` is its folder, `_lines` holds it last. */
+/**
+ * Internals read to find the directive being processed: `_dir` is its folder,
+ * `_lines` holds it last (until it is processed), `file` and `lineno` the line after it.
+ */
 interface PreprocessorReader {
   _dir?: unknown;
   _lines?: unknown;
-  pushInclude(data: string, file: string, path: string, lineno: number, attrs: Record<string, unknown>): void;
+  file?: string | null;
+  lineno: number;
+  includeDepth: number;
+  pushInclude(data: string | string[], file: string, path: string, lineno: number, attrs: Record<string, unknown>): void;
 }
 interface BlockDsl {
   named(name: string): void;
@@ -91,8 +108,23 @@ export interface AsciiDocSettings {
   defaultDir?: string;
 }
 
+/** A problem Asciidoctor reported while rendering the document. */
+export interface Warning {
+  severity: 'warning' | 'error';
+  /** In Asciidoctor's words. */
+  text: string;
+  /** The file it concerns (a URI), and the line (zero-based) if known. */
+  uri: string;
+  line?: number;
+}
+
 export interface AsciiDocResult {
   html: string;
+  /**
+   * What Asciidoctor reported, in order. Those of an include:: selecting lines
+   * or tags also have a box where the include is (`pv-warning`, `data-warning`: the index).
+   */
+  warnings: Warning[];
   /** The document's diagrams, in the order of their placeholders (`data-diagram`). */
   diagrams: Diagram[];
   blocks: AsciiDocBlock[];
@@ -106,8 +138,8 @@ interface RawDiagram {
   lines: string[];
   /** File the diagram text came from, for resolving its `!include`s. */
   baseUri: vscode.Uri;
-  /** Zero-based line of the first content line in `baseUri`. */
-  startLine: number;
+  /** The line (zero-based) of `baseUri` that line `index` of the diagram is, if any. */
+  lineOf(index: number): number | null;
   error?: string;
 }
 
@@ -130,6 +162,8 @@ export async function renderAsciiDoc(
   /** The text of `file` in the document's version, or undefined. */
   const readFile = (file: string) => version.textSync(uriInVersion(uri, file));
   const raw: RawDiagram[] = [];
+  const selections = new Selections();
+  const logger = new asciidoctor.MemoryLogger();
   /** The placeholders standing in for diagrams; they are edited through the diagram instead. */
   const diagramBlocks = new Set<unknown>();
 
@@ -142,11 +176,12 @@ export async function renderAsciiDoc(
       // Blocks of the document itself report `docfile` (or nothing); others come from include::.
       const file = cursor.getFile();
       const included = !!file && !(docFile && samePath(file, docFile));
+      // The cursor is 1-based and points at the first content line.
+      const first = cursor.getLineNumber();
       raw.push({
         lines: reader.getLines(),
         baseUri: included ? uriInVersion(uri, file) : uri,
-        // The cursor is 1-based and points at the first content line.
-        startLine: cursor.getLineNumber() - 1,
+        lineOf: (index) => selections.line(file, first + index),
       });
       const block = this.createPassBlock(parent, placeholder(raw.length - 1, attrs), {});
       diagramBlocks.add(block);
@@ -167,7 +202,7 @@ export async function renderAsciiDoc(
       } catch (e) {
         error = `Cannot read plantuml::${target}[]: ${e instanceof Error ? e.message : e}`;
       }
-      raw.push({ lines, baseUri: file ? uriInVersion(uri, file) : uri, startLine: 0, error });
+      raw.push({ lines, baseUri: file ? uriInVersion(uri, file) : uri, lineOf: (index) => index, error });
       const block = this.createPassBlock(parent, placeholder(raw.length - 1, attrs), {});
       diagramBlocks.add(block);
       return block;
@@ -177,22 +212,48 @@ export async function renderAsciiDoc(
   // Included files open in an editor are read from it, so the preview follows
   // edits made in the split view before they are saved, and a git version's
   // includes come from that version. Other files Asciidoctor reads itself
-  // (the same text); so do includes selecting lines or tags (saved text).
-  const versionInclude = (reader: PreprocessorReader | undefined, target: string) => {
-    const directive = Array.isArray(reader?._lines) ? String(reader._lines[reader._lines.length - 1]) : '';
-    if (typeof reader?._dir !== 'string' || /\[.*\b(lines|tags?)\s*=/.test(directive)) return undefined;
+  // (the same text), except those selecting lines or tags: selecting moves
+  // lines, which the preview maps back to the file (see Selections).
+  const versionInclude = (reader: PreprocessorReader | undefined, target: string, selecting: boolean, maxDepth: number) => {
+    if (typeof reader?._dir !== 'string' || reader.includeDepth >= maxDepth) return undefined;
     const file = path.resolve(reader._dir, target);
     if (safeMode !== 'unsafe' && docDir && !isWithin(file, docDir)) return undefined;
     const fileUri = uriInVersion(uri, file);
-    if (fileUri.scheme === 'file' && !version.isOpen(fileUri)) return undefined;
+    if (!selecting && fileUri.scheme === 'file' && !version.isOpen(fileUri)) return undefined;
     const text = version.textSync(fileUri);
     return text === undefined ? undefined : { file: file.split(path.sep).join('/'), text };
   };
+  /** The number of warnings shown so far: the index of the next one. */
+  const shown = () => logger.getMessages().filter((m) => SEVERITIES[m.getSeverity()]).length;
   registry.includeProcessor(function () {
-    this.handles((doc, target) => !!versionInclude(doc.reader, target));
+    this.handles((doc, target) => {
+      const lines = doc.reader?._lines;
+      const directive = Array.isArray(lines) ? String(lines[lines.length - 1]) : '';
+      return !!versionInclude(doc.reader, target, SELECTING.test(directive), maxIncludeDepth(doc));
+    });
     this.process((_doc, reader, target, attrs) => {
-      const include = versionInclude(reader, target);
-      if (include) reader.pushInclude(include.text, include.file, target, 1, attrs);
+      // `handles` has checked the rest.
+      const include = versionInclude(reader, target, true, Infinity);
+      if (!include) return;
+      const selected = selectFrom(include.text, attrs, include.file);
+      if (!selected) {
+        reader.pushInclude(include.text, include.file, target, 1, attrs);
+        return;
+      }
+      if (selected.partial) attrs['partial-option'] = '';
+      // Problems belong to the directive, which the reader has just passed; each gets a box in its place.
+      const directive = { file: reader.file, line: reader.lineno - 1 };
+      const at: SourceLocation = { getFile: () => directive.file, getLineNumber: () => directive.line };
+      const boxes = selected.warnings.map((text) => {
+        const index = shown();
+        logger.warn({ text, source_location: at });
+        return `<div class="pv-warning" data-warning="${index}"></div>\n`;
+      });
+      const box = boxes.length > 0 ? ['++++\n', ...boxes, '++++\n'] : [];
+      const lines = [...box, ...selected.lines];
+      if (lines.length === 0) return;
+      const first = selections.add(include.file, lines, [...box.map(() => null), ...selected.fileLines]);
+      reader.pushInclude(lines, include.file, target, first, attrs);
     });
   });
 
@@ -202,6 +263,7 @@ export async function renderAsciiDoc(
     standalone: false,
     sourcemap: true,
     extension_registry: registry,
+    logger,
     attributes: {
       showtitle: '',
       docdir: docDir ?? '',
@@ -210,16 +272,80 @@ export async function renderAsciiDoc(
     },
   });
   // A version's blocks can't be edited, but they still show which lines changed in a diff.
-  const { blocks, titleBlock } = tagEditableBlocks(doc, text.split(/\r\n|\r|\n/), docFile, diagramBlocks, readFile, (file) =>
-    uriInVersion(uri, file).toString()
-  );
+  const isDocument = (file: string | undefined | null) => !file || (!!docFile && samePath(file, docFile));
+  const uriOf = (file: string | undefined | null) => (isDocument(file) ? uri : uriInVersion(uri, file!)).toString();
+  const { blocks, titleBlock } = tagEditableBlocks(doc, text.split(/\r\n|\r|\n/), docFile, diagramBlocks, readFile, uriOf, selections);
   const html = await doc.convert();
+  const warnings = logger.getMessages().flatMap((message): Warning[] => {
+    const severity = SEVERITIES[message.getSeverity()];
+    if (!severity) return [];
+    const at = message.getSourceLocation();
+    const file = at?.getFile();
+    const lineno = at?.getLineNumber();
+    const line = lineno ? selections.line(file, lineno) : null;
+    return [{ severity, text: message.getText(), uri: uriOf(file), ...(line === null ? {} : { line }) }];
+  });
 
   const diagrams: Diagram[] = [];
   for (const diagram of raw) {
     diagrams.push(await toDiagram(diagram, inlineIncludes, version));
   }
-  return { html, diagrams, blocks, titleBlock, includes };
+  return { html, warnings, diagrams, blocks, titleBlock, includes };
+}
+
+/** An include:: directive selecting lines or tags. */
+const SELECTING = /\[.*\b(lines|tags?)\s*=/;
+
+/** What the preview shows of Asciidoctor's log levels (DEBUG and INFO are left out). */
+const SEVERITIES: Record<string, Warning['severity'] | undefined> = { WARN: 'warning', ERROR: 'error', FATAL: 'error' };
+
+/** How deep includes may nest before Asciidoctor stops (it then reports it). */
+function maxIncludeDepth(doc: { getAttribute(name: string): unknown }): number {
+  const depth = parseInt(String(doc.getAttribute('max-include-depth') ?? ''), 10);
+  return Number.isNaN(depth) ? 64 : depth;
+}
+
+/** Selected include lines are numbered from multiples of this, beyond any real line. */
+const SELECTION_LINES = 10_000_000;
+
+interface Pushed {
+  file: string;
+  /** The line number Asciidoctor reports for the first line. */
+  first: number;
+  /** The lines as pushed, without line endings. */
+  lines: string[];
+  /** For each line, its line in the file (zero-based), or null for a line the preview added. */
+  fileLines: (number | null)[];
+}
+
+/**
+ * The lines that include:: directives selecting lines or tags pushed.
+ * Asciidoctor numbers pushed lines one after another, but a selection skips
+ * lines (and a file may be included with several selections), so each
+ * selection is numbered from its own far-off line and mapped back to the file.
+ */
+class Selections {
+  private readonly pushed: Pushed[] = [];
+
+  /** Records `lines` pushed for `file`; returns the line number to push them at. */
+  add(file: string, lines: string[], fileLines: (number | null)[]): number {
+    const first = (this.pushed.length + 1) * SELECTION_LINES;
+    this.pushed.push({ file, first, lines: lines.map((l) => l.replace(/\r?\n$/, '')), fileLines });
+    return first;
+  }
+
+  /** The selection that line `lineno` (one-based, as Asciidoctor reports it) of `file` is in, and its index there. */
+  find(file: string | undefined | null, lineno: number): { pushed: Pushed; index: number } | undefined {
+    if (!file || lineno < SELECTION_LINES) return undefined;
+    const pushed = this.pushed.find((p) => lineno >= p.first && lineno < p.first + p.lines.length && samePath(p.file, file));
+    return pushed && { pushed, index: lineno - pushed.first };
+  }
+
+  /** The line (zero-based) of `file` that Asciidoctor reports as `lineno`; null for a line the preview added. */
+  line(file: string | undefined | null, lineno: number): number | null {
+    const found = this.find(file, lineno);
+    return found ? found.pushed.fileLines[found.index] : lineno - 1;
+  }
 }
 
 /** The include tree of a document, without rendering it. */
@@ -358,7 +484,8 @@ function tagEditableBlocks(
   docFile: string | undefined,
   skip: Set<unknown>,
   readFile: (file: string) => string | undefined,
-  uriOf: (file: string) => string
+  uriOf: (file: string | undefined) => string,
+  selections: Selections
 ): { blocks: AsciiDocBlock[]; titleBlock?: number } {
   const blocks: AsciiDocBlock[] = [];
   let titleBlock: number | undefined;
@@ -382,7 +509,7 @@ function tagEditableBlocks(
   const add = (node: AsciidoctorNode | undefined, file: string | undefined, { start, end, kind }: Span) => {
     node?.addRole(`pv-src-${blocks.length}`);
     const text = linesOf(file)!.slice(start, end + 1).join('\n');
-    blocks.push({ start, end, text, kind, uri: isDocument(file) ? undefined : uriOf(file!) });
+    blocks.push({ start, end, text, kind, uri: isDocument(file) ? undefined : uriOf(file) });
   };
 
   for (const node of doc.findBy({})) {
@@ -391,6 +518,14 @@ function tagEditableBlocks(
       continue;
     }
     const file = node.getFile() ?? undefined;
+    const selected = selections.find(file, lineNumber);
+    if (selected) {
+      // Measured in the selected lines, as Asciidoctor read them.
+      const span = measure(node, selected.pushed.lines, selected.index, false);
+      const inFile = span && inFileOf(span, selected.pushed.fileLines);
+      if (inFile) add(node, file, inFile);
+      continue;
+    }
     const fileText = linesOf(file);
     if (!fileText) continue;
     if (node.context === 'section' && node.level === 0) {
@@ -417,6 +552,19 @@ interface Span {
   start: number;
   end: number;
   kind: AsciiDocBlock['kind'];
+}
+
+/**
+ * The lines of the file that `span` of selected lines is (`fileLines`: the
+ * line of each). A block spanning lines the selection skipped is only located:
+ * editing it would replace lines the preview doesn't show.
+ */
+function inFileOf(span: Span, fileLines: (number | null)[]): Span | undefined {
+  const start = fileLines[span.start];
+  const end = fileLines[span.end];
+  if (start == null || end == null) return undefined;
+  const together = fileLines.slice(span.start, span.end + 1).every((line, i) => line === start + i);
+  return { start, end, kind: together ? span.kind : 'none' };
 }
 
 /**
@@ -494,7 +642,7 @@ function findInIncludes(
 }
 
 /** The Diagram of a block or macro: includes resolved, trimmed or wrapped to start at `@start…`. */
-async function toDiagram({ lines, baseUri, startLine, error }: RawDiagram, inlineIncludes: boolean, version: Version): Promise<Diagram> {
+async function toDiagram({ lines, baseUri, lineOf, error }: RawDiagram, inlineIncludes: boolean, version: Version): Promise<Diagram> {
   if (error !== undefined) return { lines: [], origins: [], error };
   const base = baseUri.toString();
   const resolved = inlineIncludes
@@ -502,7 +650,11 @@ async function toDiagram({ lines, baseUri, startLine, error }: RawDiagram, inlin
     : { lines, origins: lines.map((_, line) => ({ uri: base, line })) };
   let source = resolved.lines;
   // Lines of the block itself are counted from its first line; included files from their start.
-  let origins: (Origin | null)[] = resolved.origins.map((o) => (o.uri === base ? { uri: base, line: o.line + startLine } : o));
+  let origins: (Origin | null)[] = resolved.origins.map((o) => {
+    if (o.uri !== base) return o;
+    const line = lineOf(o.line);
+    return line === null ? null : { uri: base, line };
+  });
 
   const start = source.findIndex((l) => /^\s*@start\w+/.test(l));
   if (start < 0) {

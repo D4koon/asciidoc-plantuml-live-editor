@@ -7,6 +7,7 @@ import { createSourceEditor } from './sourceEditor.js';
 import { setupDocumentEditing, tagBlocks } from './documentEditing.js';
 import { setupIncludeOverview } from './includeOverview.js';
 import { setupDiffView } from './diffView.js';
+import { setupWarnings } from './warnings.js';
 
 const vscode = acquireVsCodeApi();
 
@@ -218,6 +219,7 @@ function documentTargets() {
       tagBlocks(diagramsEl, renderedBlocks, converted.titleBlock);
       diagramsEl.scrollTop = scrollTop;
     }
+    warnings.show(converted.warnings);
   }
   const diagrams = renderedDiagrams;
   return [...diagramsEl.querySelectorAll('.pv-adoc-diagram')].map((node) => {
@@ -225,6 +227,8 @@ function documentTargets() {
     return target(el, diagrams[Number(el.dataset.diagram)] ?? { lines: [], origins: [], error: 'Diagram not found' });
   });
 }
+
+const warnings = setupWarnings({ container: diagramsEl, post });
 
 const documentEditing = setupDocumentEditing({
   container: diagramsEl,

@@ -3,6 +3,7 @@
 // VS Code itself (applying edits, moving the editor) is left out. Screenshots
 // land in test-results/webview.
 
+import * as path from 'path';
 import * as vscode from 'vscode';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { locateLine, planDelete, planRename } from '../../src/diagramEdits';
@@ -179,6 +180,33 @@ describe('The preview of an AsciiDoc document', () => {
     await view.page.getByText('hi', { exact: true }).click();
     const { ref, diagram } = await view.next('select');
     expect(diagram.origins[locateLine(diagram.lines, ref)!]).toEqual(at(DOC, 6));
+  });
+
+  it('shows a warning in place of an include:: that went wrong and in the list above, both leading to the directive', async () => {
+    const chapter = disk('/project/chapter.adoc');
+    const { version } = workspace(
+      new Map([
+        [DOC, ['= Guide', '', 'include::chapter.adoc[tags=intro;setup]'].join('\n')],
+        [chapter, ['// tag::intro[]', 'Intro.', '// end::intro[]'].join('\n')],
+      ])
+    );
+    view = await harness.open({ format: 'asciidoc' });
+    await show(view, DOC, version(), 0);
+
+    const { page } = view;
+    const box = page.locator('.adoc .pv-warning');
+    await expect.poll(() => box.textContent()).toBe(`⚠ tag 'setup' not found in include file: ${chapter.fsPath.split(path.sep).join('/')} — guide.adoc:3`);
+    await expect.poll(() => page.locator('.adoc p').allTextContents()).toEqual(['Intro.']);
+    const list = page.locator('details.pv-warnings');
+    expect(await list.locator('summary').textContent()).toBe('⚠ 1 warning');
+    expect(await list.getAttribute('open')).toBeNull();
+    await view.screenshot('asciidoc-warning');
+
+    await box.click();
+    expect(await view.next('revealLine')).toEqual({ type: 'revealLine', line: 2, uri: DOC.toString() });
+    await list.locator('summary').click();
+    await list.locator('.pv-warning-item').click();
+    expect(await view.next('revealLine')).toEqual({ type: 'revealLine', line: 2, uri: DOC.toString() });
   });
 
   it('replaces a block edited in the preview', async () => {
