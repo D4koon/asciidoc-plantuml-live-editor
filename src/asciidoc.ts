@@ -1,7 +1,7 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { Diagram, Origin } from './diagrams';
-import { IncludeNode, resolveIncludes } from './includes';
+import { Diagram } from './diagrams';
+import { IncludeNode, Origin, resolveIncludes } from './includes';
 import { selectFrom } from './includeSelection';
 import { fileKey, filePathOf, samePath, uriInVersion, Version } from './versions';
 

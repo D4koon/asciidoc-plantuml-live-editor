@@ -1,6 +1,11 @@
 import * as vscode from 'vscode';
-import type { Origin } from './diagrams';
 import { fileKey, relativeUri, Version } from './versions';
+
+/** The file (a URI) and zero-based line, within a Version, that a line of a Diagram came from. */
+export interface Origin {
+  uri: string;
+  line: number;
+}
 
 const MAX_DEPTH = 16;
 const INCLUDE_RE = /^(\s*)!include(_many|_once)?\s+(.+?)\s*$/;

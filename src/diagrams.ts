@@ -1,12 +1,6 @@
 import * as vscode from 'vscode';
-import { IncludeNode, resolveIncludes } from './includes';
+import { IncludeNode, Origin, resolveIncludes } from './includes';
 import { Version } from './versions';
-
-/** The file (a URI) and zero-based line, within a Version, that a line of a Diagram came from. */
-export interface Origin {
-  uri: string;
-  line: number;
-}
 
 /** One PlantUML diagram as the engine saw it, taken out of a document. */
 export interface Diagram {
