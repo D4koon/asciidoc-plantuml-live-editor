@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Preview
+
+- AsciiDoc `include::` with `lines=`, `tags=` or `tag=` shows unsaved edits
+  of the included file, and in a diff the old side selects from the same git
+  version. The selection follows Asciidoctor's rules exactly. Clicking and
+  editing selected content goes to the right line of the included file.
+- Warnings: what Asciidoctor reports while rendering (e.g. a tag an include
+  asks for that the file doesn't have) is listed in a collapsed box above the
+  document. A problem with an include's `lines=` or `tags=` also shows in
+  place of the include. Click a warning to go to its line.
+
+### Diffs
+
+- Within a changed paragraph, the words that changed are marked.
+- A line separates the two sides.
+
 ## 1.0.0
 
 First release.
